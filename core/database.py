@@ -64,6 +64,7 @@ async def init_db():
         """)
 
         # 4. CHARACTERS CACHE
+        # Updated to include rank and true_power
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS characters_cache (
                 anilist_id INTEGER PRIMARY KEY,
@@ -71,6 +72,8 @@ async def init_db():
                 image_url TEXT,
                 rarity_override TEXT DEFAULT NULL,
                 base_power INTEGER DEFAULT 0,
+                true_power INTEGER DEFAULT 0,
+                rank INTEGER DEFAULT 10000,
                 squash_resistance FLOAT DEFAULT 0.0,
                 ability_tags JSONB DEFAULT '[]'::jsonb
             )
@@ -115,47 +118,54 @@ async def batch_add_to_inventory(user_id, character_ids):
             data
         )
 
-async def cache_character(anilist_id, name, image_url, base_power):
+async def cache_character(anilist_id, name, image_url, base_power, true_power, rank):
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         await conn.execute("""
-            INSERT INTO characters_cache (anilist_id, name, image_url, base_power)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO characters_cache (anilist_id, name, image_url, base_power, true_power, rank)
+            VALUES ($1, $2, $3, $4, $5, $6)
             ON CONFLICT(anilist_id) DO UPDATE SET
                 name=EXCLUDED.name,
                 image_url=EXCLUDED.image_url,
-                base_power=EXCLUDED.base_power
-        """, anilist_id, name, image_url, base_power)
+                base_power=EXCLUDED.base_power,
+                true_power=EXCLUDED.true_power,
+                rank=EXCLUDED.rank
+        """, anilist_id, name, image_url, base_power, true_power, rank)
 
 async def batch_cache_characters(char_data_list):
-    """Optimized: Caches multiple characters in one trip."""
+    """Optimized: Caches multiple characters with rank and true power in one trip."""
     pool = await get_db_pool()
-    # Format data for executemany: (id, name, url, power)
-    data = [(c['id'], c['name'], c['image_url'], c['favs']) for c in char_data_list]
+    # Format: (id, name, url, favorites, true_power, rank)
+    data = [
+        (c['id'], c['name'], c['image_url'], c['favs'], c['true_power'], c['page']) 
+        for c in char_data_list
+    ]
     async with pool.acquire() as conn:
         await conn.executemany("""
-            INSERT INTO characters_cache (anilist_id, name, image_url, base_power)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO characters_cache (anilist_id, name, image_url, base_power, true_power, rank)
+            VALUES ($1, $2, $3, $4, $5, $6)
             ON CONFLICT(anilist_id) DO UPDATE SET
                 name=EXCLUDED.name,
                 image_url=EXCLUDED.image_url,
-                base_power=EXCLUDED.base_power
+                base_power=EXCLUDED.base_power,
+                true_power=EXCLUDED.true_power,
+                rank=EXCLUDED.rank
         """, data)
 
 async def get_user_inventory_with_details(user_id, sort_by="date"):
     """
     Fetches the full inventory for a user with character details.
-    Sorts by: 'date' (pull order), 'power' (base_power), or 'dupes' (frequency).
+    Sorts by: 'date' (pull order), 'power' (true_power), or 'dupes' (frequency).
     """
     pool = await get_db_pool()
     
-    # Base query joining inventory and cache
-    # We use a subquery to count duplicates (count per anilist_id)
     query = """
         SELECT 
             i.anilist_id, 
             c.name, 
-            c.base_power, 
+            c.true_power, 
+            c.rarity_override,
+            c.rank,
             i.obtained_at,
             COUNT(*) OVER(PARTITION BY i.anilist_id) as dupe_count
         FROM inventory i
@@ -164,9 +174,9 @@ async def get_user_inventory_with_details(user_id, sort_by="date"):
     """
 
     if sort_by == "power":
-        query += " ORDER BY c.base_power DESC, i.obtained_at DESC"
+        query += " ORDER BY c.true_power DESC, i.obtained_at DESC"
     elif sort_by == "dupes":
-        query += " ORDER BY dupe_count DESC, c.base_power DESC"
+        query += " ORDER BY dupe_count DESC, c.true_power DESC"
     else:  # Default: pull order (newest first)
         query += " ORDER BY i.obtained_at DESC"
 

@@ -33,7 +33,7 @@ class Gacha(commands.Cog):
         return ranks.get(rarity, "C")
 
     async def fetch_character_by_rank(self, session, rarity, page):
-        """Fetches character data from AniList based on a specific rank (page)."""
+        """Fetches character data from AniList and applies battle power logic."""
         query = """
         query ($page: Int) {
             Page(page: $page, perPage: 1) {
@@ -54,12 +54,16 @@ class Gacha(commands.Cog):
                     chars = data['data']['Page']['characters']
                     if chars:
                         char = chars[0]
+                        # Calculate power based on the newly implemented tier/squash logic
+                        true_p = calculate_effective_power(char['favourites'], rarity, page)
                         return {
                             'id': char['id'],
                             'name': char['name']['full'],
                             'image_url': char['image']['large'],
                             'favs': char['favourites'],
                             'rarity': rarity,
+                            'page': page,
+                            'true_power': true_p,
                             'rank': self.get_rank_by_rarity(rarity)
                         }
         except Exception as e:
@@ -105,12 +109,12 @@ class Gacha(commands.Cog):
                 if not has_good_pull:
                     # Force the last slot to be at least an SR
                     async with aiohttp.ClientSession() as session:
-                        page = random.randint(251, 1500)
+                        _, page = "SR", random.randint(251, 1500)
                         sr_char = await self.fetch_character_by_rank(session, "SR", page)
                         if sr_char:
                             pulled_chars[-1] = sr_char
 
-            # BATCH DB FIX: Save all results in one/two trips instead of a loop
+            # BATCH DB FIX: Save all results with rank and power in one trip
             await batch_cache_characters(pulled_chars)
             await batch_add_to_inventory(ctx.author.id, [c['id'] for c in pulled_chars])
 
@@ -118,6 +122,8 @@ class Gacha(commands.Cog):
                 char = pulled_chars[0]
                 embed = discord.Embed(title=f"✨ {char['name']}", color=0x00ff00)
                 embed.add_field(name="Rarity", value=f"**{char['rarity']}**", inline=True)
+                embed.add_field(name="Rank", value=f"#{char['page']}", inline=True)
+                embed.add_field(name="Power", value=f"`{char['true_power']:,}`", inline=True)
                 embed.set_image(url=char['image_url'])
                 await loading_msg.delete()
                 await ctx.send(embed=embed)
