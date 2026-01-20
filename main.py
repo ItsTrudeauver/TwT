@@ -3,13 +3,15 @@ import os
 import asyncio
 from discord.ext import commands
 from dotenv import load_dotenv
+load_dotenv()
+
+TOKEN = os.getenv('DISCORD_TOKEN')
+PREFIX = os.getenv('COMMAND_PREFIX', 'g!')
 from core.database import init_db  # Import your new Supabase init function
 from aiohttp import web
 
 # 1. Load Secrets
-load_dotenv()
-TOKEN = os.getenv('DISCORD_TOKEN')
-PREFIX = os.getenv('COMMAND_PREFIX', 'g!')
+
 
 # 2. Setup Bot
 intents = discord.Intents.all()
