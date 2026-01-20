@@ -1,19 +1,23 @@
-import aiosqlite
+import asyncpg
 import os
 import json
 
-# Path relative to where main.py runs
-DB_PATH = os.path.join("data", "stardust.db")
+# Fetch this from your Render Environment Variables
+DATABASE_URL = os.getenv("DATABASE_URL")
 
+async def get_db_connection():
+    """Helper to create a connection to Supabase/Postgres."""
+    return await asyncpg.connect(DATABASE_URL)
 
 async def init_db():
     """
-    Initializes the database tables if they do not exist.
-    Run this once on bot startup.
+    Initializes the database tables in Supabase.
+    Postgres uses slightly different syntax than SQLite.
     """
-    async with aiosqlite.connect(DB_PATH) as db:
+    conn = await get_db_connection()
+    try:
         # 1. USERS TABLE
-        await db.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id TEXT PRIMARY KEY,
                 gacha_gems INTEGER DEFAULT 0,
@@ -25,35 +29,32 @@ async def init_db():
             )
         """)
 
-        # 2. INVENTORY TABLE (Tracks instances of characters)
-        await db.execute("""
+        # 2. INVENTORY TABLE
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS inventory (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT,
+                id SERIAL PRIMARY KEY,
+                user_id TEXT REFERENCES users(user_id),
                 anilist_id INTEGER,
                 obtained_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                is_locked BOOLEAN DEFAULT 0,
-                FOREIGN KEY(user_id) REFERENCES users(user_id)
+                is_locked BOOLEAN DEFAULT FALSE
             )
         """)
 
-        # 3. TEAMS TABLE (5 Slots)
-        await db.execute("""
+        # 3. TEAMS TABLE
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS teams (
-                user_id TEXT PRIMARY KEY,
+                user_id TEXT PRIMARY KEY REFERENCES users(user_id),
                 slot_1 INTEGER DEFAULT NULL,
                 slot_2 INTEGER DEFAULT NULL,
                 slot_3 INTEGER DEFAULT NULL,
                 slot_4 INTEGER DEFAULT NULL,
                 slot_5 INTEGER DEFAULT NULL,
-                team_name TEXT DEFAULT 'New Team',
-                FOREIGN KEY(user_id) REFERENCES users(user_id)
+                team_name TEXT DEFAULT 'New Team'
             )
         """)
 
-        # 4. CHARACTERS CACHE (Local Metadata to save API calls)
-        # We store 'ability_tags' as a JSON string
-        await db.execute("""
+        # 4. CHARACTERS CACHE
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS characters_cache (
                 anilist_id INTEGER PRIMARY KEY,
                 name TEXT,
@@ -61,63 +62,64 @@ async def init_db():
                 rarity_override TEXT DEFAULT NULL,
                 base_power INTEGER DEFAULT 0,
                 squash_resistance FLOAT DEFAULT 0.0,
-                ability_tags TEXT DEFAULT '[]' 
+                ability_tags JSONB DEFAULT '[]'::jsonb
             )
         """)
-
-        await db.commit()
-        print(f"✅ Database connected and checked at: {DB_PATH}")
-
+        print("✅ Supabase Database tables verified.")
+    finally:
+        await conn.close()
 
 # --- HELPER FUNCTIONS ---
 
-
 async def get_user(user_id):
     """Fetches user data, creating a new row if they don't exist."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT * FROM users WHERE user_id = ?",
-                              (str(user_id), )) as cursor:
-            row = await cursor.fetchone()
-            if row:
-                return row
-            else:
-                await db.execute("INSERT INTO users (user_id) VALUES (?)",
-                                 (str(user_id), ))
-                await db.commit()
-                return await get_user(user_id)
-
+    conn = await get_db_connection()
+    try:
+        row = await conn.fetchrow("SELECT * FROM users WHERE user_id = $1", str(user_id))
+        if row:
+            return dict(row)
+        else:
+            await conn.execute("INSERT INTO users (user_id) VALUES ($1)", str(user_id))
+            # Recursively call to return the new row
+            new_row = await conn.fetchrow("SELECT * FROM users WHERE user_id = $1", str(user_id))
+            return dict(new_row)
+    finally:
+        await conn.close()
 
 async def add_currency(user_id, amount):
     """Safely adds (or subtracts) Gacha Gems."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        # Ensure user exists first
-        await db.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)",
-                         (str(user_id), ))
-        await db.execute(
-            "UPDATE users SET gacha_gems = gacha_gems + ? WHERE user_id = ?",
-            (amount, str(user_id)))
-        await db.commit()
-
+    conn = await get_db_connection()
+    try:
+        # ON CONFLICT ensures user exists
+        await conn.execute("""
+            INSERT INTO users (user_id, gacha_gems) VALUES ($1, $2)
+            ON CONFLICT (user_id) DO UPDATE 
+            SET gacha_gems = users.gacha_gems + $2
+        """, str(user_id), amount)
+    finally:
+        await conn.close()
 
 async def add_character_to_inventory(user_id, anilist_id):
     """Adds a character instance to the user's inventory."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "INSERT INTO inventory (user_id, anilist_id) VALUES (?, ?)",
-            (str(user_id), anilist_id))
-        await db.commit()
-
+    conn = await get_db_connection()
+    try:
+        await conn.execute(
+            "INSERT INTO inventory (user_id, anilist_id) VALUES ($1, $2)",
+            str(user_id), anilist_id)
+    finally:
+        await conn.close()
 
 async def cache_character(anilist_id, name, image_url, base_power):
     """Upserts character metadata into the cache."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            """
+    conn = await get_db_connection()
+    try:
+        await conn.execute("""
             INSERT INTO characters_cache (anilist_id, name, image_url, base_power)
-            VALUES (?, ?, ?, ?)
+            VALUES ($1, $2, $3, $4)
             ON CONFLICT(anilist_id) DO UPDATE SET
-                name=excluded.name,
-                image_url=excluded.image_url,
-                base_power=excluded.base_power
-        """, (anilist_id, name, image_url, base_power))
-        await db.commit()
+                name=EXCLUDED.name,
+                image_url=EXCLUDED.image_url,
+                base_power=EXCLUDED.base_power
+        """, anilist_id, name, image_url, base_power)
+    finally:
+        await conn.close()

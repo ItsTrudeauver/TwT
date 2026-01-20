@@ -6,7 +6,6 @@ import random
 import os
 import asyncio
 
-# Custom Modules
 from core.database import DB_PATH, add_character_to_inventory, cache_character
 from core.game_math import calculate_effective_power
 from core.image_gen import generate_10_pull_image
@@ -18,7 +17,7 @@ class Gacha(commands.Cog):
         self.bot = bot
         self.anilist_url = os.getenv("ANILIST_URL")
 
-    # --- 1. CORE GACHA MECHANICS ---
+    # --- 1. CORE GACHA MECHANICS (RANK-BASED RARITY) ---
     def roll_rarity(self):
         roll = random.uniform(0, 100)
         if roll <= 1.0: return "SSR"
@@ -26,6 +25,7 @@ class Gacha(commands.Cog):
         else: return "R"
 
     def get_rank_by_rarity(self, rarity):
+        """Rank ranges define the rarity corridor."""
         if rarity == "SSR": return random.randint(1, 250)
         elif rarity == "SR": return random.randint(251, 1500)
         else: return random.randint(1501, 10000)
@@ -55,20 +55,14 @@ class Gacha(commands.Cog):
                     if resp.status == 429:
                         await asyncio.sleep(2)
                         return None
-                    if resp.status != 200:
-                        return None
-
+                    if resp.status != 200: return None
                     data = await resp.json()
                     chars = data.get('data', {}).get('Page',
                                                      {}).get('characters')
-
                     if not chars: return None
-
                     char = chars[0]
                     img_url = char.get('image', {}).get('large')
-                    if not img_url or "default.jpg" in img_url or "default.png" in img_url:
-                        return None
-
+                    if not img_url or "default.jpg" in img_url: return None
                     return char
             except:
                 return None
@@ -78,7 +72,6 @@ class Gacha(commands.Cog):
         while attempts < 7:
             rarity = forced_rarity if forced_rarity else self.roll_rarity()
             rank = self.get_rank_by_rarity(rarity)
-
             data = await self.fetch_character_data(rank)
 
             if data:
@@ -88,14 +81,14 @@ class Gacha(commands.Cog):
                     'image_url': data['image']['large'],
                     'favs': data['favourites'],
                     'rarity': rarity,
-                    'power': calculate_effective_power(data['favourites'])
+                    'power': calculate_effective_power(data['favourites'],
+                                                       rarity)
                 }
             attempts += 1
             await asyncio.sleep(0.2)
         return None
 
     # --- 3. COMMANDS ---
-
     @commands.command(name="pull")
     async def pull_character(self, ctx, amount: int = 1):
         if amount not in [1, 10]:
@@ -108,30 +101,24 @@ class Gacha(commands.Cog):
 
         for _ in range(amount):
             char_data = await self.get_valid_character()
-            if char_data:
-                pulled_chars.append(char_data)
+            if char_data: pulled_chars.append(char_data)
 
-        # Mercy Rule
         if amount == 10 and pulled_chars:
-            has_good_pull = any(c['rarity'] in ["SR", "SSR"]
-                                for c in pulled_chars)
-            if not has_good_pull:
+            if not any(c['rarity'] in ["SR", "SSR"] for c in pulled_chars):
                 guaranteed = await self.get_valid_character(forced_rarity="SR")
-                if guaranteed:
-                    pulled_chars[-1] = guaranteed
+                if guaranteed: pulled_chars[-1] = guaranteed
 
         if not pulled_chars:
             await loading_msg.edit(
                 content="❌ Connection Error. AniList is unreachable.")
             return
 
-        # Save to DB
         for char in pulled_chars:
+            # SAVE RANK-DEFINED RARITY TO CACHE
             await cache_character(char['id'], char['name'], char['image_url'],
-                                  char['favs'])
+                                  char['favs'], char['rarity'])
             await add_character_to_inventory(str(ctx.author.id), char['id'])
 
-        # Display
         if amount == 1:
             c = pulled_chars[0]
             cols = {"SSR": 0xFFD700, "SR": 0xDA70D6, "R": 0x00BFFF}
@@ -153,32 +140,23 @@ class Gacha(commands.Cog):
 
     @commands.command(name="inventory", aliases=["inv"])
     async def show_inventory(self, ctx, page: int = 1):
-        """
-        Lists your characters sorted by Power (Highest First).
-        """
         items_per_page = 10
         offset = (page - 1) * items_per_page
-
         try:
             async with aiosqlite.connect(DB_PATH) as db:
-                # 1. Count Total
                 cursor = await db.execute(
                     "SELECT COUNT(*) FROM inventory WHERE user_id = ?",
                     (str(ctx.author.id), ))
                 total_items = (await cursor.fetchone())[0]
-
                 if total_items == 0:
                     await ctx.send(
                         "🎒 Your inventory is empty. Try `!pull` first!")
                     return
-
                 max_pages = (total_items // items_per_page) + 1
-                if page > max_pages:
-                    page = max_pages
+                if page > max_pages: page = max_pages
 
-                # 2. Fetch Data (FIXED: Using c.base_power instead of c.favourites)
                 sql = """
-                SELECT i.id, c.name, c.base_power
+                SELECT i.id, c.name, c.base_power, c.rarity
                 FROM inventory i
                 LEFT JOIN characters_cache c ON i.anilist_id = c.anilist_id
                 WHERE i.user_id = ?
@@ -189,36 +167,20 @@ class Gacha(commands.Cog):
                     sql, (str(ctx.author.id), items_per_page, offset))
                 rows = await cursor.fetchall()
 
-            # 3. Build Embed
-            embed = discord.Embed(
-                title=f"🎒 Inventory - {ctx.author.name}",
-                description=
-                f"**Page {page}/{max_pages}** | Total Units: {total_items}",
-                color=discord.Color.dark_grey())
-
+            embed = discord.Embed(title=f"🎒 Inventory - {ctx.author.name}",
+                                  color=discord.Color.dark_grey())
             list_text = ""
             for row in rows:
-                inv_id, name, raw_favs = row
-
-                if name is None:
-                    list_text += f"`ID {inv_id}` *Unknown Character* (Cache Missing)\n"
-                else:
-                    # raw_favs IS base_power in the DB, so we use it to calculate effective power
-                    power = calculate_effective_power(raw_favs)
+                inv_id, name, raw_favs, rarity = row
+                if name:
+                    power = calculate_effective_power(raw_favs, rarity or "R")
                     list_text += f"`ID {inv_id}` **{name}** — ⚔️ {power:,}\n"
 
-            if not list_text:
-                list_text = "No items found."
-
-            embed.add_field(name="Strongest Units",
-                            value=list_text,
+            embed.add_field(name=f"Units (Page {page}/{max_pages})",
+                            value=list_text or "Empty.",
                             inline=False)
-            embed.set_footer(text="Equip with: !set_team <ID> <ID> <ID> ...")
-
             await ctx.send(embed=embed)
-
         except Exception as e:
-            print(f"❌ ERROR: {e}")
             await ctx.send(f"⚠️ Inventory Error: {e}")
 
 
