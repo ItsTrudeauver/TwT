@@ -21,8 +21,8 @@ class Gacha(commands.Cog):
             return "SSR", random.randint(1, 250)
             
         roll = random.random() * 100
-        if roll < 1:  return "SSR", random.randint(1, 250)
-        if roll < 11: return "SR", random.randint(251, 1500)
+        if roll < 3:  return "SSR", random.randint(1, 250)
+        if roll < 15: return "SR", random.randint(251, 1500)
         return "R", random.randint(1501, 10000)
 
     async def fetch_character_by_rank(self, session, rarity, page):
