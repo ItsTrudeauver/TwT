@@ -64,16 +64,17 @@ async def init_db():
         """)
 
         # 4. CHARACTERS CACHE
-        # Updated to include rank and true_power
+        # Updated to include rank and true_power for the new battle logic
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS characters_cache (
                 anilist_id INTEGER PRIMARY KEY,
                 name TEXT,
                 image_url TEXT,
                 rarity_override TEXT DEFAULT NULL,
+                rarity TEXT DEFAULT 'R',
+                rank INTEGER DEFAULT 10000,
                 base_power INTEGER DEFAULT 0,
                 true_power INTEGER DEFAULT 0,
-                rank INTEGER DEFAULT 10000,
                 squash_resistance FLOAT DEFAULT 0.0,
                 ability_tags JSONB DEFAULT '[]'::jsonb
             )
@@ -118,41 +119,43 @@ async def batch_add_to_inventory(user_id, character_ids):
             data
         )
 
-async def cache_character(anilist_id, name, image_url, base_power, true_power, rank):
+async def cache_character(anilist_id, name, image_url, base_power, true_power, rarity, rank):
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         await conn.execute("""
-            INSERT INTO characters_cache (anilist_id, name, image_url, base_power, true_power, rank)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO characters_cache (anilist_id, name, image_url, base_power, true_power, rarity, rank)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             ON CONFLICT(anilist_id) DO UPDATE SET
                 name=EXCLUDED.name,
                 image_url=EXCLUDED.image_url,
                 base_power=EXCLUDED.base_power,
                 true_power=EXCLUDED.true_power,
+                rarity=EXCLUDED.rarity,
                 rank=EXCLUDED.rank
-        """, anilist_id, name, image_url, base_power, true_power, rank)
+        """, anilist_id, name, image_url, base_power, true_power, rarity, rank)
 
 async def batch_cache_characters(char_data_list):
-    """Optimized: Caches multiple characters with rank and true power in one trip."""
+    """Optimized: Caches multiple characters in one trip."""
     pool = await get_db_pool()
-    # Format: (id, name, url, favorites, true_power, rank)
+    # Format data for executemany: (id, name, url, base_power, true_power, rarity, rank)
     data = [
-        (c['id'], c['name'], c['image_url'], c['favs'], c['true_power'], c['page']) 
+        (c['id'], c['name'], c['image_url'], c['favs'], c['true_power'], c['rarity'], c['page']) 
         for c in char_data_list
     ]
     async with pool.acquire() as conn:
         await conn.executemany("""
-            INSERT INTO characters_cache (anilist_id, name, image_url, base_power, true_power, rank)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO characters_cache (anilist_id, name, image_url, base_power, true_power, rarity, rank)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             ON CONFLICT(anilist_id) DO UPDATE SET
                 name=EXCLUDED.name,
                 image_url=EXCLUDED.image_url,
                 base_power=EXCLUDED.base_power,
                 true_power=EXCLUDED.true_power,
+                rarity=EXCLUDED.rarity,
                 rank=EXCLUDED.rank
         """, data)
 
-async def get_user_inventory_with_details(user_id, sort_by="date"):
+async def get_inventory_details(user_id, sort_by="date"):
     """
     Fetches the full inventory for a user with character details.
     Sorts by: 'date' (pull order), 'power' (true_power), or 'dupes' (frequency).
@@ -164,7 +167,7 @@ async def get_user_inventory_with_details(user_id, sort_by="date"):
             i.anilist_id, 
             c.name, 
             c.true_power, 
-            c.rarity_override,
+            c.rarity,
             c.rank,
             i.obtained_at,
             COUNT(*) OVER(PARTITION BY i.anilist_id) as dupe_count

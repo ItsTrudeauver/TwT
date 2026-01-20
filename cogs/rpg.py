@@ -3,7 +3,7 @@ from discord.ext import commands
 import random
 import os
 
-from core.database import get_db_connection
+from core.database import get_db_pool
 from core.game_math import calculate_effective_power
 from core.image_gen import generate_team_image
 
@@ -12,8 +12,8 @@ class RPG(commands.Cog):
         self.bot = bot
 
     async def get_team_data(self, user_id):
-        conn = await get_db_connection()
-        try:
+        pool = await get_db_pool()
+        async with pool.acquire() as conn:
             # Fetch the slot IDs
             row = await conn.fetchrow("SELECT slot_1, slot_2, slot_3, slot_4, slot_5 FROM teams WHERE user_id = $1", str(user_id))
             
@@ -23,35 +23,34 @@ class RPG(commands.Cog):
             team_list = []
             total_power = 0
             
-            for char_id in row:
+            # Map the record values into a list for iteration
+            slot_ids = [row['slot_1'], row['slot_2'], row['slot_3'], row['slot_4'], row['slot_5']]
+            
+            for char_id in slot_ids:
                 if char_id is None:
                     team_list.append(None)
                     continue
                 
-                # Fetch details from Supabase
+                # Fetch details from Supabase using true_power and rank
                 char_data = await conn.fetchrow("""
-                    SELECT c.name, c.image_url, c.base_power, c.rarity_override 
+                    SELECT c.name, c.image_url, c.base_power, c.true_power, c.rarity, c.rank, c.rarity_override 
                     FROM inventory i
                     JOIN characters_cache c ON i.anilist_id = c.anilist_id
                     WHERE i.id = $1
                 """, char_id)
                 
                 if char_data:
-                    name, img, raw_favs, rarity_ov = char_data['name'], char_data['image_url'], char_data['base_power'], char_data['rarity_override']
-                    rarity = "R"
-                    if raw_favs >= 50000: rarity = "SSR"
-                    elif raw_favs >= 10000: rarity = "SR"
-                    if rarity_ov: rarity = rarity_ov
-
-                    power = calculate_effective_power(raw_favs)
+                    name = char_data['name']
+                    img = char_data['image_url']
+                    rarity = char_data['rarity_override'] or char_data['rarity']
+                    power = char_data['true_power']
+                    
                     total_power += power
                     team_list.append({'name': name, 'image_url': img, 'rarity': rarity, 'power': power})
                 else:
                     team_list.append(None)
 
             return total_power, team_list
-        finally:
-            await conn.close()
 
     @commands.command(name="set_team")
     async def set_team(self, ctx, s1: int, s2: int = None, s3: int = None, s4: int = None, s5: int = None):
@@ -62,8 +61,8 @@ class RPG(commands.Cog):
             await ctx.send("❌ Duplicate IDs detected!")
             return
 
-        conn = await get_db_connection()
-        try:
+        pool = await get_db_pool()
+        async with pool.acquire() as conn:
             # Verify Ownership in Postgres
             owned = await conn.fetch("SELECT id FROM inventory WHERE user_id = $1 AND id = ANY($2)", 
                                     str(ctx.author.id), clean_slots)
@@ -83,8 +82,6 @@ class RPG(commands.Cog):
             """, str(ctx.author.id), *final_slots)
             
             await ctx.send(f"✅ **Squad Updated.**")
-        finally:
-            await conn.close()
 
     @commands.command(name="team")
     async def view_team(self, ctx, user: discord.Member = None):
