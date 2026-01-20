@@ -141,3 +141,35 @@ async def batch_cache_characters(char_data_list):
                 image_url=EXCLUDED.image_url,
                 base_power=EXCLUDED.base_power
         """, data)
+
+async def get_user_inventory_with_details(user_id, sort_by="date"):
+    """
+    Fetches the full inventory for a user with character details.
+    Sorts by: 'date' (pull order), 'power' (base_power), or 'dupes' (frequency).
+    """
+    pool = await get_db_pool()
+    
+    # Base query joining inventory and cache
+    # We use a subquery to count duplicates (count per anilist_id)
+    query = """
+        SELECT 
+            i.anilist_id, 
+            c.name, 
+            c.base_power, 
+            i.obtained_at,
+            COUNT(*) OVER(PARTITION BY i.anilist_id) as dupe_count
+        FROM inventory i
+        LEFT JOIN characters_cache c ON i.anilist_id = c.anilist_id
+        WHERE i.user_id = $1
+    """
+
+    if sort_by == "power":
+        query += " ORDER BY c.base_power DESC, i.obtained_at DESC"
+    elif sort_by == "dupes":
+        query += " ORDER BY dupe_count DESC, c.base_power DESC"
+    else:  # Default: pull order (newest first)
+        query += " ORDER BY i.obtained_at DESC"
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(query, str(user_id))
+        return [dict(row) for row in rows]
