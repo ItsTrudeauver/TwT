@@ -14,7 +14,6 @@ class RPG(commands.Cog):
     async def get_team_data(self, user_id):
         pool = await get_db_pool()
         async with pool.acquire() as conn:
-            # Fetch the slot IDs
             row = await conn.fetchrow("SELECT slot_1, slot_2, slot_3, slot_4, slot_5 FROM teams WHERE user_id = $1", str(user_id))
             
             if not row:
@@ -22,8 +21,6 @@ class RPG(commands.Cog):
 
             team_list = []
             total_power = 0
-            
-            # Map the record values into a list for iteration
             slot_ids = [row['slot_1'], row['slot_2'], row['slot_3'], row['slot_4'], row['slot_5']]
             
             for char_id in slot_ids:
@@ -31,22 +28,22 @@ class RPG(commands.Cog):
                     team_list.append(None)
                     continue
                 
-                # Fetch details from Supabase using true_power and rank
                 char_data = await conn.fetchrow("""
-                    SELECT c.name, c.image_url, c.base_power, c.true_power, c.rarity, c.rank, c.rarity_override 
+                    SELECT c.name, c.image_url, c.true_power, c.rarity, c.rarity_override 
                     FROM inventory i
                     JOIN characters_cache c ON i.anilist_id = c.anilist_id
                     WHERE i.id = $1
                 """, char_id)
                 
                 if char_data:
-                    name = char_data['name']
-                    img = char_data['image_url']
-                    rarity = char_data['rarity_override'] or char_data['rarity']
                     power = char_data['true_power']
-                    
                     total_power += power
-                    team_list.append({'name': name, 'image_url': img, 'rarity': rarity, 'power': power})
+                    team_list.append({
+                        'name': char_data['name'], 
+                        'image_url': char_data['image_url'], 
+                        'rarity': char_data['rarity_override'] or char_data['rarity'], 
+                        'power': power
+                    })
                 else:
                     team_list.append(None)
 
@@ -63,7 +60,6 @@ class RPG(commands.Cog):
 
         pool = await get_db_pool()
         async with pool.acquire() as conn:
-            # Verify Ownership in Postgres
             owned = await conn.fetch("SELECT id FROM inventory WHERE user_id = $1 AND id = ANY($2)", 
                                     str(ctx.author.id), clean_slots)
             
@@ -81,7 +77,7 @@ class RPG(commands.Cog):
                     slot_5=EXCLUDED.slot_5
             """, str(ctx.author.id), *final_slots)
             
-            await ctx.send(f"✅ **Squad Updated.**")
+            await ctx.send(f"✅ Squad composition updated.")
 
     @commands.command(name="team")
     async def view_team(self, ctx, user: discord.Member = None):

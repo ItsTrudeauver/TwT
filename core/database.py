@@ -22,7 +22,7 @@ async def get_db_pool():
 
 async def init_db():
     """
-    Initializes the database tables in Supabase.
+    Initializes the database tables and performs schema migrations for new columns.
     """
     pool = await get_db_pool()
     async with pool.acquire() as conn:
@@ -64,7 +64,6 @@ async def init_db():
         """)
 
         # 4. CHARACTERS CACHE
-        # Updated to include rank and true_power for the new battle logic
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS characters_cache (
                 anilist_id INTEGER PRIMARY KEY,
@@ -79,7 +78,13 @@ async def init_db():
                 ability_tags JSONB DEFAULT '[]'::jsonb
             )
         """)
-    print("✅ Supabase Database tables verified.")
+
+        # SCHEMA MIGRATION: Force-add columns if the table already existed
+        await conn.execute("ALTER TABLE characters_cache ADD COLUMN IF NOT EXISTS true_power INTEGER DEFAULT 0")
+        await conn.execute("ALTER TABLE characters_cache ADD COLUMN IF NOT EXISTS rank INTEGER DEFAULT 10000")
+        await conn.execute("ALTER TABLE characters_cache ADD COLUMN IF NOT EXISTS rarity TEXT DEFAULT 'R'")
+
+    print("✅ Database schema verified and migrated.")
 
 async def get_user(user_id):
     """Fetches user data, creating a new row if they don't exist using the pool."""
@@ -102,13 +107,6 @@ async def add_currency(user_id, amount):
             SET gacha_gems = users.gacha_gems + $2
         """, str(user_id), amount)
 
-async def add_character_to_inventory(user_id, anilist_id):
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        await conn.execute(
-            "INSERT INTO inventory (user_id, anilist_id) VALUES ($1, $2)",
-            str(user_id), anilist_id)
-
 async def batch_add_to_inventory(user_id, character_ids):
     """Optimized: Adds multiple characters to inventory in one trip."""
     pool = await get_db_pool()
@@ -119,25 +117,10 @@ async def batch_add_to_inventory(user_id, character_ids):
             data
         )
 
-async def cache_character(anilist_id, name, image_url, base_power, true_power, rarity, rank):
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        await conn.execute("""
-            INSERT INTO characters_cache (anilist_id, name, image_url, base_power, true_power, rarity, rank)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            ON CONFLICT(anilist_id) DO UPDATE SET
-                name=EXCLUDED.name,
-                image_url=EXCLUDED.image_url,
-                base_power=EXCLUDED.base_power,
-                true_power=EXCLUDED.true_power,
-                rarity=EXCLUDED.rarity,
-                rank=EXCLUDED.rank
-        """, anilist_id, name, image_url, base_power, true_power, rarity, rank)
-
 async def batch_cache_characters(char_data_list):
-    """Optimized: Caches multiple characters in one trip."""
+    """Optimized: Caches multiple characters in one trip with full battle logic stats."""
     pool = await get_db_pool()
-    # Format data for executemany: (id, name, url, base_power, true_power, rarity, rank)
+    # Format data for executemany: (id, name, url, favorites, true_power, rarity, rank)
     data = [
         (c['id'], c['name'], c['image_url'], c['favs'], c['true_power'], c['rarity'], c['page']) 
         for c in char_data_list
