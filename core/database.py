@@ -5,16 +5,27 @@ import json
 # Fetch this from your Render Environment Variables
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-async def get_db_connection():
-    """Helper to create a connection to Supabase/Postgres."""
-    return await asyncpg.connect(DATABASE_URL)
+# Global pool variable to be initialized once
+_pool = None
+
+async def get_db_pool():
+    """Returns the existing connection pool or creates a new one if it doesn't exist."""
+    global _pool
+    if _pool is None:
+        _pool = await asyncpg.create_pool(
+            DATABASE_URL,
+            min_size=5,
+            max_size=20,
+            command_timeout=60
+        )
+    return _pool
 
 async def init_db():
     """
     Initializes the database tables in Supabase.
     """
-    conn = await get_db_connection()
-    try:
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
         # 1. USERS TABLE
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
@@ -64,14 +75,12 @@ async def init_db():
                 ability_tags JSONB DEFAULT '[]'::jsonb
             )
         """)
-        print("✅ Supabase Database tables verified.")
-    finally:
-        await conn.close()
+    print("✅ Supabase Database tables verified.")
 
 async def get_user(user_id):
-    """Fetches user data, creating a new row if they don't exist."""
-    conn = await get_db_connection()
-    try:
+    """Fetches user data, creating a new row if they don't exist using the pool."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
         row = await conn.fetchrow("SELECT * FROM users WHERE user_id = $1", str(user_id))
         if row:
             return dict(row)
@@ -79,32 +88,36 @@ async def get_user(user_id):
             await conn.execute("INSERT INTO users (user_id) VALUES ($1)", str(user_id))
             new_row = await conn.fetchrow("SELECT * FROM users WHERE user_id = $1", str(user_id))
             return dict(new_row)
-    finally:
-        await conn.close()
 
 async def add_currency(user_id, amount):
-    conn = await get_db_connection()
-    try:
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
         await conn.execute("""
             INSERT INTO users (user_id, gacha_gems) VALUES ($1, $2)
             ON CONFLICT (user_id) DO UPDATE 
             SET gacha_gems = users.gacha_gems + $2
         """, str(user_id), amount)
-    finally:
-        await conn.close()
 
 async def add_character_to_inventory(user_id, anilist_id):
-    conn = await get_db_connection()
-    try:
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
         await conn.execute(
             "INSERT INTO inventory (user_id, anilist_id) VALUES ($1, $2)",
             str(user_id), anilist_id)
-    finally:
-        await conn.close()
+
+async def batch_add_to_inventory(user_id, character_ids):
+    """Optimized: Adds multiple characters to inventory in one trip."""
+    pool = await get_db_pool()
+    data = [(str(user_id), cid) for cid in character_ids]
+    async with pool.acquire() as conn:
+        await conn.executemany(
+            "INSERT INTO inventory (user_id, anilist_id) VALUES ($1, $2)",
+            data
+        )
 
 async def cache_character(anilist_id, name, image_url, base_power):
-    conn = await get_db_connection()
-    try:
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
         await conn.execute("""
             INSERT INTO characters_cache (anilist_id, name, image_url, base_power)
             VALUES ($1, $2, $3, $4)
@@ -113,5 +126,18 @@ async def cache_character(anilist_id, name, image_url, base_power):
                 image_url=EXCLUDED.image_url,
                 base_power=EXCLUDED.base_power
         """, anilist_id, name, image_url, base_power)
-    finally:
-        await conn.close()
+
+async def batch_cache_characters(char_data_list):
+    """Optimized: Caches multiple characters in one trip."""
+    pool = await get_db_pool()
+    # Format data for executemany: (id, name, url, power)
+    data = [(c['id'], c['name'], c['image_url'], c['favs']) for c in char_data_list]
+    async with pool.acquire() as conn:
+        await conn.executemany("""
+            INSERT INTO characters_cache (anilist_id, name, image_url, base_power)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT(anilist_id) DO UPDATE SET
+                name=EXCLUDED.name,
+                image_url=EXCLUDED.image_url,
+                base_power=EXCLUDED.base_power
+        """, data)
