@@ -66,16 +66,20 @@ class Inventory(commands.Cog):
                 color=0x3498db
             )
             
+            # Added User Avatar as Thumbnail
+            embed.set_thumbnail(url=ctx.author.display_avatar.url)
+            
             lines = []
             for c in chunk:
                 name = c['name'] or f"Unknown ID:{c['anilist_id']}"
                 rarity = c['rarity'] or "R"
-                rank = c['rank'] or 10000
+                char_id = c['id'] # Requires 'id' to be fetched in database.py
                 power = c['true_power'] or 0
                 dupes = c['dupe_count']
                 
+                # Updated to show ID and ⚔️ emoji
                 lines.append(f"**{name}** [{rarity}]")
-                lines.append(f"└ Rank: `#{rank}` | Power: `{power:,}` | Dupes: `{dupes}`")
+                lines.append(f"└ ID: `{char_id}` | ⚔️: `{power:,}` | Dupes: `{dupes}`")
             
             embed.description += "\n\n" + "\n".join(lines)
             embed.set_footer(text=f"Page {idx+1}/{len(chunks)} • Total Characters: {len(data)}")

@@ -138,15 +138,14 @@ async def batch_cache_characters(char_data_list):
                 rank=EXCLUDED.rank
         """, data)
 
+# core/database.py
+
 async def get_inventory_details(user_id, sort_by="date"):
-    """
-    Fetches the full inventory for a user with character details.
-    Sorts by: 'date' (pull order), 'power' (true_power), or 'dupes' (frequency).
-    """
     pool = await get_db_pool()
     
     query = """
         SELECT 
+            i.id,  -- Add this line to fetch the unique inventory ID
             i.anilist_id, 
             c.name, 
             c.true_power, 
