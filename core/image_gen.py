@@ -174,22 +174,33 @@ async def generate_10_pull_image(character_list):
 
 async def generate_team_image(team_list):
     """
-    Draws the 5-Stack Team Banner.
-    team_list: A list of 5 dictionaries. If a slot is empty, the dict is None.
+    Draws the 5-Stack Team Banner with a flat black background and detailed stats.
+    team_list: List of dicts containing 'name', 'power', 'ability_tags', etc.
     """
-    # 1. Canvas Setup (Wide Banner)
-    canvas_w, canvas_h = 1200, 450
+    # 1. Canvas Setup (Wide Banner - increased height for stats)
+    canvas_w, canvas_h = 1200, 550
+    # Flat Black Background as requested
+    base_img = Image.new("RGBA", (canvas_w, canvas_h), (10, 10, 10, 255))
+    draw = ImageDraw.Draw(base_img)
+
+    # 2. Fonts
     try:
-        base_img = Image.open(str(BG_PATH)).convert("RGBA").resize(
-            (canvas_w, canvas_h))
+        font_large = ImageFont.truetype(str(FONT_PATH), 45)
+        font_medium = ImageFont.truetype(str(FONT_PATH), 26)
+        font_small = ImageFont.truetype(str(FONT_PATH), 18)
     except:
-        base_img = Image.new("RGBA", (canvas_w, canvas_h), "#101010")
+        font_large = font_medium = font_small = ImageFont.load_default()
 
-    # Darken the background slightly so characters pop
-    overlay = Image.new("RGBA", base_img.size, (0, 0, 0, 100))
-    base_img = Image.alpha_composite(base_img, overlay)
+    # 3. Total Power Calculation & Header
+    total_power = sum(char['power'] for char in team_list if char)
+    header_text = f"SQUAD TOTAL POWER: {total_power:,}"
+    
+    # Center the header
+    bbox = draw.textbbox((0, 0), header_text, font=font_large)
+    tx_w = bbox[2] - bbox[0]
+    draw.text(((canvas_w - tx_w) / 2, 25), header_text, font=font_large, fill="#FFD700")
 
-    # 2. Fetch Images for existing members concurrently
+    # 4. Fetch Images concurrently
     tasks = []
     indices = []
     for i, char in enumerate(team_list):
@@ -202,16 +213,11 @@ async def generate_team_image(team_list):
         for i, img in zip(indices, downloaded):
             team_list[i]['image_obj'] = img
 
-    # 3. Layout: A tight row of 5 centered cards
-    # Card size: 200x300
-    # Spacing: 15px
-    # Total Width: (200 * 5) + (15 * 4) = 1060px
-    # Start X: (1200 - 1060) / 2 = 70px
+    # 5. Layout (200x300 cards + gap)
     start_x = 70
-    start_y = 75  # Vertically centered-ish
+    start_y = 100 
     gap_x = 15
 
-    # 4. Drawing Loop
     for i, char in enumerate(team_list):
         x = start_x + (i * (200 + gap_x))
         y = start_y
@@ -220,34 +226,34 @@ async def generate_team_image(team_list):
             # Draw the Card
             card = create_character_card(char)
             base_img.paste(card, (x, y), card)
+            
+            # Draw Individual Power
+            p_text = f"⚔️ {char['power']:,}"
+            p_bbox = draw.textbbox((0, 0), p_text, font=font_medium)
+            px_w = p_bbox[2] - p_bbox[0]
+            draw.text((x + (200 - px_w) / 2, y + 310), p_text, font=font_medium, fill="white")
+            
+            # Draw Skills
+            skills = char.get('ability_tags', [])
+            s_text = ", ".join(skills) if skills else "No Skills"
+            s_color = "#AAAAAA" if not skills else "#00FF7F" # Gray for none, Green for active
+            s_bbox = draw.textbbox((0, 0), s_text, font=font_small)
+            sx_w = s_bbox[2] - s_bbox[0]
+            draw.text((x + (200 - sx_w) / 2, y + 345), s_text, font=font_small, fill=s_color)
+            
         else:
             # Draw "Empty Slot" Placeholder
-            # Create a semi-transparent gray box
-            empty_slot = Image.new("RGBA", (200, 300), (50, 50, 50, 100))
-            draw = ImageDraw.Draw(empty_slot)
-
-            # Dashed Border
-            draw.rectangle([0, 0, 199, 299], outline="#666666", width=2)
-
-            # "EMPTY" Text
-            try:
-                font = ImageFont.truetype(str(FONT_PATH), 24)
-            except:
-                font = ImageFont.load_default()
-
-            text = "SLOT " + str(i + 1)
-            bbox = draw.textbbox((0, 0), text, font=font)
-            tx_w = bbox[2] - bbox[0]
-            tx_h = bbox[3] - bbox[1]
-
-            draw.text(((200 - tx_w) / 2, (300 - tx_h) / 2),
-                      text,
-                      font=font,
-                      fill="#999999")
-
+            empty_slot = Image.new("RGBA", (200, 300), (30, 30, 30, 255))
+            e_draw = ImageDraw.Draw(empty_slot)
+            e_draw.rectangle([0, 0, 199, 299], outline="#444444", width=2)
+            
+            text = f"SLOT {i + 1}"
+            bbox = e_draw.textbbox((0, 0), text, font=font_medium)
+            tx_w, tx_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            e_draw.text(((200 - tx_w) / 2, (300 - tx_h) / 2), text, font=font_medium, fill="#666666")
             base_img.paste(empty_slot, (x, y), empty_slot)
 
-    # 5. Save
+    # 6. Save
     output = io.BytesIO()
     base_img.save(output, format="PNG")
     output.seek(0)

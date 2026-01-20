@@ -2,14 +2,10 @@ import asyncpg
 import os
 import json
 
-# Fetch this from your Render Environment Variables
 DATABASE_URL = os.getenv("DATABASE_URL")
-
-# Global pool variable to be initialized once
 _pool = None
 
 async def get_db_pool():
-    """Returns the existing connection pool or creates a new one if it doesn't exist."""
     global _pool
     if _pool is None:
         _pool = await asyncpg.create_pool(
@@ -21,12 +17,9 @@ async def get_db_pool():
     return _pool
 
 async def init_db():
-    """
-    Initializes the database tables and performs schema migrations for new columns.
-    """
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        # 1. USERS TABLE
+        # USERS: Gems, Pity, Starter Flag, Daily Boat Pulls
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id TEXT PRIMARY KEY,
@@ -35,11 +28,14 @@ async def init_db():
                 pity_counter INTEGER DEFAULT 0,
                 luck_boost_stacks INTEGER DEFAULT 0,
                 last_daily_exchange TIMESTAMP,
-                last_expedition_claim TIMESTAMP
+                last_expedition_claim TIMESTAMP,
+                daily_boat_pulls INTEGER DEFAULT 0,
+                last_boat_pull_at TIMESTAMP DEFAULT '1970-01-01',
+                has_claimed_starter BOOLEAN DEFAULT FALSE
             )
         """)
 
-        # 2. INVENTORY TABLE
+        # INVENTORY: Unique ID for every unit owned
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS inventory (
                 id SERIAL PRIMARY KEY,
@@ -50,7 +46,7 @@ async def init_db():
             )
         """)
 
-        # 3. TEAMS TABLE
+        # TEAMS: Battle squad (5 slots)
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS teams (
                 user_id TEXT PRIMARY KEY REFERENCES users(user_id),
@@ -58,113 +54,95 @@ async def init_db():
                 slot_2 INTEGER DEFAULT NULL,
                 slot_3 INTEGER DEFAULT NULL,
                 slot_4 INTEGER DEFAULT NULL,
-                slot_5 INTEGER DEFAULT NULL,
-                team_name TEXT DEFAULT 'New Team'
+                slot_5 INTEGER DEFAULT NULL
             )
         """)
 
-        # 4. CHARACTERS CACHE
+        # EXPEDITIONS: Passive gem earners
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS expeditions (
+                user_id TEXT PRIMARY KEY REFERENCES users(user_id),
+                slot_ids INTEGER[] DEFAULT '{}',
+                start_time TIMESTAMP,
+                last_claim TIMESTAMP
+            )
+        """)
+
+        # CACHE: Stores AniList data to save API calls
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS characters_cache (
                 anilist_id INTEGER PRIMARY KEY,
                 name TEXT,
                 image_url TEXT,
-                rarity_override TEXT DEFAULT NULL,
                 rarity TEXT DEFAULT 'R',
                 rank INTEGER DEFAULT 10000,
                 base_power INTEGER DEFAULT 0,
                 true_power INTEGER DEFAULT 0,
-                squash_resistance FLOAT DEFAULT 0.0,
-                ability_tags JSONB DEFAULT '[]'::jsonb
+                ability_tags JSONB DEFAULT '[]'::jsonb,
+                squash_resistance FLOAT DEFAULT 0.0
             )
         """)
 
-        # SCHEMA MIGRATION: Force-add columns if the table already existed
-        await conn.execute("ALTER TABLE characters_cache ADD COLUMN IF NOT EXISTS true_power INTEGER DEFAULT 0")
-        await conn.execute("ALTER TABLE characters_cache ADD COLUMN IF NOT EXISTS rank INTEGER DEFAULT 10000")
-        await conn.execute("ALTER TABLE characters_cache ADD COLUMN IF NOT EXISTS rarity TEXT DEFAULT 'R'")
+        # DAILY TASKS: Tracks progress for Battle/NPC tasks
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS daily_tasks (
+                user_id TEXT,
+                task_key TEXT,
+                progress INTEGER DEFAULT 0,
+                is_claimed BOOLEAN DEFAULT FALSE,
+                last_updated DATE DEFAULT CURRENT_DATE,
+                PRIMARY KEY (user_id, task_key)
+            )
+        """)
 
-    print("✅ Database schema verified and migrated.")
+        # GLOBAL SETTINGS: Fairness toggles
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS global_settings (
+                key TEXT PRIMARY KEY,
+                value_bool BOOLEAN DEFAULT TRUE
+            )
+        """)
+
+    print("✅ Database initialized successfully.")
 
 async def get_user(user_id):
-    """Fetches user data, creating a new row if they don't exist using the pool."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow("SELECT * FROM users WHERE user_id = $1", str(user_id))
-        if row:
-            return dict(row)
-        else:
-            await conn.execute("INSERT INTO users (user_id) VALUES ($1)", str(user_id))
-            new_row = await conn.fetchrow("SELECT * FROM users WHERE user_id = $1", str(user_id))
-            return dict(new_row)
+        if row: return dict(row)
+        await conn.execute("INSERT INTO users (user_id) VALUES ($1)", str(user_id))
+        return dict(await conn.fetchrow("SELECT * FROM users WHERE user_id = $1", str(user_id)))
 
 async def add_currency(user_id, amount):
     pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        await conn.execute("""
-            INSERT INTO users (user_id, gacha_gems) VALUES ($1, $2)
-            ON CONFLICT (user_id) DO UPDATE 
-            SET gacha_gems = users.gacha_gems + $2
-        """, str(user_id), amount)
+    await pool.execute("UPDATE users SET gacha_gems = gacha_gems + $1 WHERE user_id = $2", amount, str(user_id))
 
 async def batch_add_to_inventory(user_id, character_ids):
-    """Optimized: Adds multiple characters to inventory in one trip."""
     pool = await get_db_pool()
     data = [(str(user_id), cid) for cid in character_ids]
-    async with pool.acquire() as conn:
-        await conn.executemany(
-            "INSERT INTO inventory (user_id, anilist_id) VALUES ($1, $2)",
-            data
-        )
+    await pool.executemany("INSERT INTO inventory (user_id, anilist_id) VALUES ($1, $2)", data)
 
-async def batch_cache_characters(char_data_list):
-    """Optimized: Caches multiple characters in one trip with full battle logic stats."""
+async def batch_cache_characters(chars):
     pool = await get_db_pool()
-    # Format data for executemany: (id, name, url, favorites, true_power, rarity, rank)
-    data = [
-        (c['id'], c['name'], c['image_url'], c['favs'], c['true_power'], c['rarity'], c['page']) 
-        for c in char_data_list
-    ]
-    async with pool.acquire() as conn:
-        await conn.executemany("""
-            INSERT INTO characters_cache (anilist_id, name, image_url, base_power, true_power, rarity, rank)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            ON CONFLICT(anilist_id) DO UPDATE SET
-                name=EXCLUDED.name,
-                image_url=EXCLUDED.image_url,
-                base_power=EXCLUDED.base_power,
-                true_power=EXCLUDED.true_power,
-                rarity=EXCLUDED.rarity,
-                rank=EXCLUDED.rank
-        """, data)
-
-# core/database.py
+    data = [(c['id'], c['name'], c['image_url'], c['rarity'], c['page'], c['favs'], c['true_power'], json.dumps(c.get('tags', []))) for c in chars]
+    await pool.executemany("""
+        INSERT INTO characters_cache (anilist_id, name, image_url, rarity, rank, base_power, true_power, ability_tags)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        ON CONFLICT (anilist_id) DO UPDATE SET true_power = EXCLUDED.true_power
+    """, data)
 
 async def get_inventory_details(user_id, sort_by="date"):
     pool = await get_db_pool()
-    
+    # Updated to include ID column
     query = """
-        SELECT 
-            i.id,  -- Add this line to fetch the unique inventory ID
-            i.anilist_id, 
-            c.name, 
-            c.true_power, 
-            c.rarity,
-            c.rank,
-            i.obtained_at,
-            COUNT(*) OVER(PARTITION BY i.anilist_id) as dupe_count
+        SELECT i.id, i.anilist_id, c.name, c.true_power, c.rarity, c.rank, 
+               COUNT(*) OVER(PARTITION BY i.anilist_id) as dupe_count
         FROM inventory i
         LEFT JOIN characters_cache c ON i.anilist_id = c.anilist_id
         WHERE i.user_id = $1
     """
-
-    if sort_by == "power":
-        query += " ORDER BY c.true_power DESC, i.obtained_at DESC"
-    elif sort_by == "dupes":
-        query += " ORDER BY dupe_count DESC, c.true_power DESC"
-    else:  # Default: pull order (newest first)
-        query += " ORDER BY i.obtained_at DESC"
-
+    if sort_by == "power": query += " ORDER BY c.true_power DESC"
+    else: query += " ORDER BY i.obtained_at DESC"
+    
     async with pool.acquire() as conn:
-        rows = await conn.fetch(query, str(user_id))
-        return [dict(row) for row in rows]
+        return [dict(r) for r in await conn.fetch(query, str(user_id))]

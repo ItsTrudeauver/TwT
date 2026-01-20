@@ -29,7 +29,7 @@ class RPG(commands.Cog):
                     continue
                 
                 char_data = await conn.fetchrow("""
-                    SELECT c.name, c.image_url, c.true_power, c.rarity, c.rarity_override 
+                    SELECT c.name, c.image_url, c.true_power, c.rarity, c.rarity_override, c.ability_tags 
                     FROM inventory i
                     JOIN characters_cache c ON i.anilist_id = c.anilist_id
                     WHERE i.id = $1
@@ -42,14 +42,15 @@ class RPG(commands.Cog):
                         'name': char_data['name'], 
                         'image_url': char_data['image_url'], 
                         'rarity': char_data['rarity_override'] or char_data['rarity'], 
-                        'power': power
+                        'power': power,
+                        'ability_tags': char_data['ability_tags'] # Now passing skills to the generator
                     })
                 else:
                     team_list.append(None)
 
             return total_power, team_list
 
-    @commands.command(name="set_team", aliases=['st'])
+    @commands.command(name="set_team_battle", aliases=['stb'])
     async def set_team(self, ctx, s1: int, s2: int = None, s3: int = None, s4: int = None, s5: int = None):
         slots = [s1, s2, s3, s4, s5]
         clean_slots = [s for s in slots if s is not None]
