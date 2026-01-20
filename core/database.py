@@ -5,6 +5,7 @@ import json
 # Path relative to where main.py runs
 DB_PATH = os.path.join("data", "stardust.db")
 
+
 async def init_db():
     """
     Initializes the database tables if they do not exist.
@@ -63,42 +64,55 @@ async def init_db():
                 ability_tags TEXT DEFAULT '[]' 
             )
         """)
-        
+
         await db.commit()
         print(f"✅ Database connected and checked at: {DB_PATH}")
 
+
 # --- HELPER FUNCTIONS ---
+
 
 async def get_user(user_id):
     """Fetches user data, creating a new row if they don't exist."""
     async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT * FROM users WHERE user_id = ?", (str(user_id),)) as cursor:
+        async with db.execute("SELECT * FROM users WHERE user_id = ?",
+                              (str(user_id), )) as cursor:
             row = await cursor.fetchone()
             if row:
                 return row
             else:
-                await db.execute("INSERT INTO users (user_id) VALUES (?)", (str(user_id),))
+                await db.execute("INSERT INTO users (user_id) VALUES (?)",
+                                 (str(user_id), ))
                 await db.commit()
                 return await get_user(user_id)
+
 
 async def add_currency(user_id, amount):
     """Safely adds (or subtracts) Gacha Gems."""
     async with aiosqlite.connect(DB_PATH) as db:
         # Ensure user exists first
-        await db.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (str(user_id),))
-        await db.execute("UPDATE users SET gacha_gems = gacha_gems + ? WHERE user_id = ?", (amount, str(user_id)))
+        await db.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)",
+                         (str(user_id), ))
+        await db.execute(
+            "UPDATE users SET gacha_gems = gacha_gems + ? WHERE user_id = ?",
+            (amount, str(user_id)))
         await db.commit()
+
 
 async def add_character_to_inventory(user_id, anilist_id):
     """Adds a character instance to the user's inventory."""
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("INSERT INTO inventory (user_id, anilist_id) VALUES (?, ?)", (str(user_id), anilist_id))
+        await db.execute(
+            "INSERT INTO inventory (user_id, anilist_id) VALUES (?, ?)",
+            (str(user_id), anilist_id))
         await db.commit()
+
 
 async def cache_character(anilist_id, name, image_url, base_power):
     """Upserts character metadata into the cache."""
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
+        await db.execute(
+            """
             INSERT INTO characters_cache (anilist_id, name, image_url, base_power)
             VALUES (?, ?, ?, ?)
             ON CONFLICT(anilist_id) DO UPDATE SET

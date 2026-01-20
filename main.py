@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 # 1. Load Environment Variables (Secrets)
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
-PREFIX = os.getenv('COMMAND_PREFIX', '!')
+PREFIX = os.getenv('COMMAND_PREFIX', 'g!')
 
 # 2. Setup Bot Intents (Permissions)
 # We need 'all' intents to see members and read message content
