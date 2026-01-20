@@ -49,14 +49,22 @@ def calculate_effective_power(raw_favs, rarity="R", rank=10000):
         return squash_with_caps(raw_power, 5000, 6250)
 
 def calculate_team_power(team_list):
+    """
+    Calculates total power including a 5% boost per duplicate 
+    owned by the player for each character in the squad.
+    """
     total_power = 0
     for char in team_list:
         if not char: continue
-        # Expecting rank to be stored in character data
-        raw = char.get('base_power', 0)
-        rarity = char.get('rarity', 'R')
-        rank = char.get('rank', 10000)
-        total_power += calculate_effective_power(raw, rarity, rank)
+        
+        # Use the base 'True Power' from the cache
+        base = char.get('true_power', 0)
+        
+        # Calculate dupe boost: 1.0 for first copy, +0.05 for each extra copy
+        dupe_count = char.get('dupe_count', 1)
+        boost = 1 + (max(0, dupe_count - 1) * 0.05)
+        
+        total_power += int(base * boost)
     return total_power
 
 def simulate_standoff(power_a, power_b):

@@ -1,6 +1,6 @@
 import discord
 from discord.ext import commands
-from core.database import get_inventory_details
+from core.database import get_inventory_details, mass_scrap_r_rarity
 
 class InventoryPagination(discord.ui.View):
     def __init__(self, pages, user):
@@ -66,20 +66,22 @@ class Inventory(commands.Cog):
                 color=0x3498db
             )
             
-            # Added User Avatar as Thumbnail
             embed.set_thumbnail(url=ctx.author.display_avatar.url)
             
             lines = []
             for c in chunk:
                 name = c['name'] or f"Unknown ID:{c['anilist_id']}"
                 rarity = c['rarity'] or "R"
-                char_id = c['id'] # Requires 'id' to be fetched in database.py
-                power = c['true_power'] or 0
+                char_id = c['id']
+                base_power = c['true_power'] or 0
                 dupes = c['dupe_count']
                 
-                # Updated to show ID and ⚔️ emoji
+                # Calculate 5% permanent stat boost per duplicate
+                boost = 1 + (max(0, dupes - 1) * 0.05)
+                final_power = int(base_power * boost)
+                
                 lines.append(f"**{name}** [{rarity}]")
-                lines.append(f"└ ID: `{char_id}` | ⚔️: `{power:,}` | Dupes: `{dupes}`")
+                lines.append(f"└ ID: `{char_id}` | ⚔️: `{final_power:,}` | Dupes: `{dupes}`")
             
             embed.description += "\n\n" + "\n".join(lines)
             embed.set_footer(text=f"Page {idx+1}/{len(chunks)} • Total Characters: {len(data)}")
@@ -87,6 +89,15 @@ class Inventory(commands.Cog):
 
         view = InventoryPagination(pages, ctx.author)
         await ctx.send(embed=pages[0], view=view)
+
+    @commands.command(name="scrap_all", aliases=["mass_scrap"])
+    async def scrap_all(self, ctx):
+        """Scraps all unlocked 'R' characters for 200 Gems each."""
+        count, reward = await mass_scrap_r_rarity(ctx.author.id)
+        if count > 0:
+            await ctx.send(f"♻️ Scrapped **{count}** characters for **{reward:,}** Gems!")
+        else:
+            await ctx.send("❌ No unlocked 'R' characters found to scrap.")
 
 async def setup(bot):
     await bot.add_cog(Inventory(bot))

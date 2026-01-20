@@ -146,3 +146,61 @@ async def get_inventory_details(user_id, sort_by="date"):
     
     async with pool.acquire() as conn:
         return [dict(r) for r in await conn.fetch(query, str(user_id))]
+
+# core/database.py
+
+async def scrap_character_from_db(user_id, inventory_id):
+    """
+    Removes an 'R' rarity character from inventory and adds 200 gems.
+    Returns (success_bool, message).
+    """
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        # Check if the character exists, belongs to the user, and is rarity 'R'
+        query = """
+            SELECT i.id FROM inventory i
+            JOIN characters_cache c ON i.anilist_id = c.anilist_id
+            WHERE i.id = $1 AND i.user_id = $2 AND c.rarity = 'R'
+        """
+        row = await conn.fetchrow(query, inventory_id, str(user_id))
+        if not row:
+            return False, "Character not found or is not an 'R' rarity."
+
+        # Execute scrap in a transaction
+        async with conn.transaction():
+            await conn.execute("DELETE FROM inventory WHERE id = $1", inventory_id)
+            await conn.execute("UPDATE users SET gacha_gems = gacha_gems + 200 WHERE user_id = $1", str(user_id))
+            
+        return True, "Successfully scrapped for 200 Gems!"
+
+# core/database.py
+
+async def mass_scrap_r_rarity(user_id):
+    """
+    Deletes all unlocked 'R' characters in a user's inventory 
+    and rewards 200 gems per character.
+    """
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            # Identify R characters that are NOT locked
+            query = """
+                DELETE FROM inventory
+                WHERE user_id = $1 
+                AND is_locked = FALSE
+                AND anilist_id IN (
+                    SELECT anilist_id FROM characters_cache WHERE rarity = 'R'
+                )
+                RETURNING id
+            """
+            deleted_rows = await conn.fetch(query, str(user_id))
+            count = len(deleted_rows)
+            
+            if count > 0:
+                reward = count * 200
+                await conn.execute(
+                    "UPDATE users SET gacha_gems = gacha_gems + $1 WHERE user_id = $2", 
+                    reward, str(user_id)
+                )
+                return count, reward
+            return 0, 0
