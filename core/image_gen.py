@@ -3,6 +3,7 @@ import aiohttp
 import io
 import os
 import pathlib
+import asyncio
 
 # --- ROBUST PATH SETUP ---
 # Gets the absolute path of the folder this script is in
@@ -83,7 +84,7 @@ def create_character_card(char_data, card_size=(200, 300)):
     theme = THEMES.get(char_data['rarity'], THEMES["R"])
 
     # Image
-    img = char_data['image_obj']
+    img = char_data.get('image_obj')
     if img:
         img = ImageOps.fit(img, (card_size[0], card_size[1] - 50),
                            method=Image.Resampling.LANCZOS)
@@ -148,8 +149,11 @@ async def generate_10_pull_image(character_list):
         print(f"⚠️ Warning: BG not found at {BG_PATH}")
         base_img = Image.new("RGBA", (canvas_w, canvas_h), "#121212")
 
-    for char in character_list:
-        char['image_obj'] = await fetch_image(char['image_url'])
+    # FIX: Fetch all images concurrently to prevent timeouts/stuck commands
+    tasks = [fetch_image(char['image_url']) for char in character_list]
+    downloaded_images = await asyncio.gather(*tasks)
+    for i, img in enumerate(downloaded_images):
+        character_list[i]['image_obj'] = img
 
     start_x, start_y = 40, 40
     gap_x, gap_y = 10, 20
@@ -168,9 +172,6 @@ async def generate_10_pull_image(character_list):
     return output
 
 
-# ... (Keep all your existing imports and functions)
-
-
 async def generate_team_image(team_list):
     """
     Draws the 5-Stack Team Banner.
@@ -179,7 +180,6 @@ async def generate_team_image(team_list):
     # 1. Canvas Setup (Wide Banner)
     canvas_w, canvas_h = 1200, 450
     try:
-        # You can add a specific 'team_bg.jpg' later if you want a different vibe
         base_img = Image.open(str(BG_PATH)).convert("RGBA").resize(
             (canvas_w, canvas_h))
     except:
@@ -189,10 +189,18 @@ async def generate_team_image(team_list):
     overlay = Image.new("RGBA", base_img.size, (0, 0, 0, 100))
     base_img = Image.alpha_composite(base_img, overlay)
 
-    # 2. Fetch Images for existing members
-    for char in team_list:
+    # 2. Fetch Images for existing members concurrently
+    tasks = []
+    indices = []
+    for i, char in enumerate(team_list):
         if char:
-            char['image_obj'] = await fetch_image(char['image_url'])
+            tasks.append(fetch_image(char['image_url']))
+            indices.append(i)
+    
+    if tasks:
+        downloaded = await asyncio.gather(*tasks)
+        for i, img in zip(indices, downloaded):
+            team_list[i]['image_obj'] = img
 
     # 3. Layout: A tight row of 5 centered cards
     # Card size: 200x300

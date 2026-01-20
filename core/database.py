@@ -12,7 +12,6 @@ async def get_db_connection():
 async def init_db():
     """
     Initializes the database tables in Supabase.
-    Postgres uses slightly different syntax than SQLite.
     """
     conn = await get_db_connection()
     try:
@@ -69,8 +68,6 @@ async def init_db():
     finally:
         await conn.close()
 
-# --- HELPER FUNCTIONS ---
-
 async def get_user(user_id):
     """Fetches user data, creating a new row if they don't exist."""
     conn = await get_db_connection()
@@ -80,17 +77,14 @@ async def get_user(user_id):
             return dict(row)
         else:
             await conn.execute("INSERT INTO users (user_id) VALUES ($1)", str(user_id))
-            # Recursively call to return the new row
             new_row = await conn.fetchrow("SELECT * FROM users WHERE user_id = $1", str(user_id))
             return dict(new_row)
     finally:
         await conn.close()
 
 async def add_currency(user_id, amount):
-    """Safely adds (or subtracts) Gacha Gems."""
     conn = await get_db_connection()
     try:
-        # ON CONFLICT ensures user exists
         await conn.execute("""
             INSERT INTO users (user_id, gacha_gems) VALUES ($1, $2)
             ON CONFLICT (user_id) DO UPDATE 
@@ -100,7 +94,6 @@ async def add_currency(user_id, amount):
         await conn.close()
 
 async def add_character_to_inventory(user_id, anilist_id):
-    """Adds a character instance to the user's inventory."""
     conn = await get_db_connection()
     try:
         await conn.execute(
@@ -110,7 +103,6 @@ async def add_character_to_inventory(user_id, anilist_id):
         await conn.close()
 
 async def cache_character(anilist_id, name, image_url, base_power):
-    """Upserts character metadata into the cache."""
     conn = await get_db_connection()
     try:
         await conn.execute("""
