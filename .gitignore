@@ -1,0 +1,15 @@
+# --- Security (NEVER UPLOAD THESE) ---
+.env
+token.txt
+secrets.json
+
+# --- Database (Don't upload your local save file) ---
+data/*.db
+*.sqlite3
+
+# --- Python Junk ---
+__pycache__/
+*.py[cod]
+venv/
+.idea/
+.vscode/
