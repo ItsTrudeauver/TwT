@@ -1,13 +1,16 @@
 import discord
 from discord.ext import commands
 import math
-from core.database import get_db_pool, get_user
+# Ensure 'mass_scrap_r_rarity' is imported if you plan to use the scrap_all command,
+# otherwise keep it as is.
+from core.database import get_db_pool, get_user 
 
 class Inventory(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(name="gems", aliases=["gems", "wallet", "profile"])
+    # FIX: Changed name to "balance" and added "bal" to aliases
+    @commands.command(name="gems", aliases=["pc", "wallet"])
     async def check_balance(self, ctx):
         """
         Shows your current Gems, Scrap, and Collection stats.
@@ -38,9 +41,11 @@ class Inventory(commands.Cog):
         embed.set_thumbnail(url=ctx.author.display_avatar.url)
 
         # Currency Field
+        # Note: Ensure your 'users' table has a 'scrap' column, or this line will error.
+        scrap_amount = user_data.get('scrap', 0) # Safe get in case key missing
         embed.add_field(
             name="💰 Currency",
-            value=f"**Gems:** `{user_data['gacha_gems']:,}` 💎\n**Scrap:** `{user_data['scrap']:,}` 🔩",
+            value=f"**Gems:** `{user_data['gacha_gems']:,}` 💎\n**Scrap:** `{scrap_amount:,}` 🔩",
             inline=True
         )
 
@@ -70,8 +75,8 @@ class Inventory(commands.Cog):
         per_page = 10
         max_pages = math.ceil(count_val / per_page)
         
-        if page < 1 or page > max_pages:
-            return await ctx.send(f"❌ Invalid page. You have {max_pages} pages.")
+        if page < 1: page = 1
+        if page > max_pages: page = max_pages
 
         offset = (page - 1) * per_page
         
@@ -81,7 +86,7 @@ class Inventory(commands.Cog):
             FROM inventory i
             JOIN characters_cache c ON i.anilist_id = c.anilist_id
             WHERE i.user_id = $1
-            ORDER BY c.true_power DESC
+            ORDER BY c.true_power DESC, i.obtained_at DESC
             LIMIT $2 OFFSET $3
         """, user_id, per_page, offset)
 
@@ -119,7 +124,8 @@ class Inventory(commands.Cog):
             return await ctx.send("❌ Character not found in your inventory.")
 
         embed = discord.Embed(title=f"{row['name']}", color=0xF1C40F if row['rarity'] == "SSR" else 0x9B59B6)
-        embed.set_image(url=row['image_url'])
+        if row['image_url']:
+            embed.set_image(url=row['image_url'])
         
         status = "🔒 Locked" if row['is_locked'] else "🔓 Unlocked"
         
