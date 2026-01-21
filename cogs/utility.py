@@ -5,11 +5,45 @@ import json
 import os
 from core.database import get_db_pool
 from core.game_math import calculate_effective_power
+from core.skills import SKILL_DATA
 
 class Utility(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.anilist_url = os.getenv("ANILIST_URL", "https://graphql.anilist.co")
+    
+    @commands.command(name="skills", aliases=["sl"])
+    async def list_skills(self, ctx):
+        """
+        Displays all available skills and their effects.
+        Usage: !skills or !sl
+        """
+        embed = discord.Embed(
+            title="✨ Character Skills", 
+            description="List of all possible abilities and their battle/expedition effects.",
+            color=0xF1C40F
+        )
+
+        # Iterate through the dictionary imported from core/skills.py
+        for skill_name, data in SKILL_DATA.items():
+            # Create a clean string for attributes
+            context = "Battle" if data['applies_in'] == "b" else "Expedition"
+            if data['applies_in'] == "g": context = "Global"
+            
+            tags = []
+            if data['stackable']: tags.append("Stackable")
+            if data['overlap']: tags.append("Overlap OK")
+            
+            attr_text = f"**[{context}]** " + (" | ".join(tags) if tags else "Unique")
+            
+            embed.add_field(
+                name=f"**{skill_name}**",
+                value=f"{data['description']}\n*{attr_text}*",
+                inline=False
+            )
+
+        embed.set_footer(text="Skills are randomly assigned or granted via admin commands.")
+        await ctx.send(embed=embed)
 
     @commands.command(name="lookup")
     async def lookup(self, ctx, *, name: str):
