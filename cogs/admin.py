@@ -156,5 +156,38 @@ class Admin(commands.Cog):
                 await conn.execute("UPDATE users SET scrap = scrap + $1 WHERE user_id = $2", total_scrap, user_id)
                 await ctx.send(f"Scrapped {len(chars)} characters for {total_scrap} scrap.")
 
+    @commands.command(name="override_unit")
+    @commands.is_owner()
+    async def override_unit(self, ctx, anilist_id: int, rarity: str, power: int):
+        """Manually sets rarity and power for a unit and locks it from being updated by standard logic."""
+        rarity = rarity.upper()
+        if rarity not in ["SSR", "SR", "R"]:
+            return await ctx.send("❌ Rarity must be SSR, SR, or R.")
+
+        pool = await get_db_pool()
+        async with pool.acquire() as conn:
+            # Check if character exists in cache, otherwise fetch basic info first
+            char = await conn.fetchrow("SELECT name FROM characters_cache WHERE anilist_id = $1", anilist_id)
+            
+            if not char:
+                gacha_cog = self.bot.get_cog("Gacha")
+                async with aiohttp.ClientSession() as session:
+                    data = await gacha_cog.fetch_character_by_id(session, anilist_id)
+                if not data: return await ctx.send("❌ Could not find that unit on AniList.")
+                # We'll update the data dict with our override before initial cache
+                data['rarity'] = rarity
+                data['true_power'] = power
+                await batch_cache_characters([data])
+            
+            # Set the override flag and stats
+            await conn.execute("""
+                UPDATE characters_cache 
+                SET rarity = $1, true_power = $2, is_overridden = TRUE 
+                WHERE anilist_id = $3
+            """, rarity, power, anilist_id)
+            
+            name = char['name'] if char else data['name']
+            await ctx.send(f"✅ **{name}** (ID: {anilist_id}) overridden to **{rarity}** with **{power:,} Power**.")
+
 async def setup(bot):
     await bot.add_cog(Admin(bot))

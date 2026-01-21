@@ -90,7 +90,8 @@ async def init_db():
                 base_power INTEGER DEFAULT 0,
                 true_power INTEGER DEFAULT 0,
                 ability_tags JSONB DEFAULT '[]'::jsonb,
-                squash_resistance FLOAT DEFAULT 0.0
+                squash_resistance FLOAT DEFAULT 0.0,
+                is_overridden BOOLEAN DEFAULT FALSE -- Protects manual edits
             )
         """)
 
@@ -139,7 +140,10 @@ async def batch_cache_characters(chars):
     await pool.executemany("""
         INSERT INTO characters_cache (anilist_id, name, image_url, rarity, rank, base_power, true_power, ability_tags)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        ON CONFLICT (anilist_id) DO UPDATE SET true_power = EXCLUDED.true_power
+        ON CONFLICT (anilist_id) DO UPDATE 
+        SET true_power = EXCLUDED.true_power,
+            rarity = EXCLUDED.rarity
+        WHERE characters_cache.is_overridden = FALSE
     """, data)
 
 async def get_inventory_details(user_id, sort_by="date"):

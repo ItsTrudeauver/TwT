@@ -117,7 +117,15 @@ class Gacha(commands.Cog):
                     rank = self.get_cached_rank(anilist_id)
                     rarity = self.determine_rarity(rank)
                 
-                true_p = calculate_effective_power(char_data['favourites'], rarity, rank)
+                # Check for existing manual override in DB
+                pool = await get_db_pool()
+                override = await pool.fetchrow("SELECT rarity, true_power, is_overridden FROM characters_cache WHERE anilist_id = $1", char_data['id'])
+                
+                if override and override['is_overridden']:
+                    rarity = override['rarity']
+                    true_p = override['true_power']
+                else:
+                    true_p = calculate_effective_power(char_data['favourites'], rarity, rank)
                 
                 return {
                     'id': char_data['id'],
@@ -156,9 +164,16 @@ class Gacha(commands.Cog):
                     chars = data.get('data', {}).get('Page', {}).get('characters', [])
                     if chars:
                         char = chars[0]
-                        # Verify rank in our local JSON just in case (optional consistency)
-                        # real_rank = self.get_cached_rank(char['id'])
-                        true_p = calculate_effective_power(char['favourites'], rarity, page)
+                        
+                        # Check for existing manual override in DB
+                        pool = await get_db_pool()
+                        override = await pool.fetchrow("SELECT rarity, true_power, is_overridden FROM characters_cache WHERE anilist_id = $1", char['id'])
+                        
+                        if override and override['is_overridden']:
+                            rarity = override['rarity']
+                            true_p = override['true_power']
+                        else:
+                            true_p = calculate_effective_power(char['favourites'], rarity, page)
                         
                         return {
                             'id': char['id'],
