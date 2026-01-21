@@ -4,6 +4,7 @@ import aiohttp
 import random
 import os
 import asyncio
+import time
 
 from core.database import get_user, batch_add_to_inventory, batch_cache_characters, get_db_pool
 from core.game_math import calculate_effective_power
@@ -25,25 +26,38 @@ class Gacha(commands.Cog):
         if roll < 15: return "SR", random.randint(251, 1500)
         return "R", random.randint(1501, 10000)
 
-async def get_active_banner(self):
-    pool = await get_db_pool()
-    return await pool.fetchrow("SELECT * FROM banners WHERE is_active = TRUE LIMIT 1")
+    async def get_active_banner(self):
+        pool = await get_db_pool()
+        current_time = int(time.time())
+        
+        # Only fetch the banner if it is active AND has not expired
+        banner = await pool.fetchrow("""
+            SELECT * FROM banners 
+            WHERE is_active = TRUE AND end_timestamp > $1 
+            LIMIT 1
+        """, current_time)
+        
+        # If a banner expired but is still marked 'is_active', clean it up
+        if not banner:
+            await pool.execute("UPDATE banners SET is_active = FALSE WHERE is_active = TRUE AND end_timestamp <= $1", current_time)
+            
+        return banner
 
-async def fetch_banner_pull(self, session, banner):
-    """Modified pull logic that accounts for rate-ups."""
-    rarity, page = self.get_rarity_and_page()
-    
-    # If we rolled a high rarity, check for rate-up hit
-    if rarity in ["SSR", "SR"] and random.random() < banner['rate_up_chance']:
-        # Select a random ID from the rate-up list
-        target_id = random.choice(banner['rate_up_ids'])
-        # Use your existing fetch_character_by_id logic (from previous step)
-        return await self.fetch_character_by_id(session, target_id)
-    
-    # Otherwise, proceed with a normal random pull
-    return await self.fetch_character_by_rank(session, rarity, page)
+    async def fetch_banner_pull(self, session, banner):
+        """Modified pull logic that accounts for rate-ups."""
+        rarity, page = self.get_rarity_and_page()
+        
+        # If we rolled a high rarity, check for rate-up hit
+        if rarity in ["SSR", "SR"] and random.random() < banner['rate_up_chance']:
+            # Select a random ID from the rate-up list
+            target_id = random.choice(banner['rate_up_ids'])
+            # Use fetch_character_by_id logic
+            return await self.fetch_character_by_id(session, target_id)
+        
+        # Otherwise, proceed with a normal random pull
+        return await self.fetch_character_by_rank(session, rarity, page)
 
-async def fetch_character_by_id(self, session, anilist_id: int):
+    async def fetch_character_by_id(self, session, anilist_id: int):
         """Fetches a specific character by ID and calculates their rank and rarity."""
         # 1. Fetch character details
         char_query = """
@@ -75,7 +89,7 @@ async def fetch_character_by_id(self, session, anilist_id: int):
                 # Rank is total characters with more favs + 1
                 rank = (await resp.json())['data']['Page']['pageInfo']['total'] + 1
 
-            # Determine Rarity based on your existing tiers
+            # Determine Rarity based on existing tiers
             if rank <= 250: rarity = "SSR"
             elif rank <= 1500: rarity = "SR"
             else: rarity = "R"
@@ -148,6 +162,8 @@ async def fetch_character_by_id(self, session, anilist_id: int):
         loading_msg = await ctx.send(f"🎰 *Initiating {amount}-Pull Protocol...*")
         
         try:
+            banner = await self.get_active_banner()
+            
             # Deduct gems if not free
             if not is_free:
                 pool = await get_db_pool()
@@ -156,8 +172,11 @@ async def fetch_character_by_id(self, session, anilist_id: int):
             async with aiohttp.ClientSession() as session:
                 tasks = []
                 for _ in range(amount):
-                    rarity, page = self.get_rarity_and_page()
-                    tasks.append(self.fetch_character_by_rank(session, rarity, page))
+                    if banner:
+                        tasks.append(self.fetch_banner_pull(session, banner))
+                    else:
+                        rarity, page = self.get_rarity_and_page()
+                        tasks.append(self.fetch_character_by_rank(session, rarity, page))
                 
                 pulled_chars = [c for c in await asyncio.gather(*tasks) if c]
 
@@ -226,24 +245,6 @@ async def fetch_character_by_id(self, session, anilist_id: int):
 
         except Exception as e:
             await ctx.send(f"⚠️ Error: `{e}`")
-# In cogs/gacha.py
 
-async def get_active_banner(self):
-    pool = await get_db_pool()
-    current_time = int(time.time())
-    
-    # Only fetch the banner if it is active AND has not expired
-    banner = await pool.fetchrow("""
-        SELECT * FROM banners 
-        WHERE is_active = TRUE AND end_timestamp > $1 
-        LIMIT 1
-    """, current_time)
-    
-    # If a banner expired but is still marked 'is_active', clean it up
-    if not banner:
-        await pool.execute("UPDATE banners SET is_active = FALSE WHERE is_active = TRUE AND end_timestamp <= $1", current_time)
-        
-    return banner
-    
 async def setup(bot):
     await bot.add_cog(Gacha(bot))

@@ -3,14 +3,17 @@
 import discord
 from discord.ext import commands
 import json
-from core.database import get_db_pool
+import time
+import aiohttp
+from core.database import get_db_pool, batch_cache_characters
 from core.skills import get_skill_info, list_all_skills
+from core.image_gen import generate_banner_image
 
 class Admin(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-@commands.command(name="add_skill")
+    @commands.command(name="add_skill")
     @commands.is_owner()
     async def add_skill(self, ctx, anilist_id: int, skill_name: str):
         skill = get_skill_info(skill_name)
@@ -68,61 +71,58 @@ class Admin(commands.Cog):
                 """, json.dumps(current_tags), anilist_id)
 
             await ctx.send(f"✅ Added **{target_skill}** to **{char['name']}**!")
+
     @add_skill.error
     async def add_skill_error(self, ctx, error):
         if isinstance(error, commands.NotOwner):
             await ctx.send("🚫 This command is reserved for the bot administrator.")
 
-import time
+    @commands.command(name="set_banner")
+    @commands.is_owner()
+    async def set_banner(self, ctx, days: int, name: str, *anilist_ids: int):
+        """
+        Sets the active banner.
+        Usage: !set_banner <days> <name> <id1> <id2> ...
+        """
+        # 1. Calculate Unix Timestamp
+        end_time = int(time.time() + (days * 86400))
+        
+        gacha_cog = self.bot.get_cog("Gacha")
+        async with aiohttp.ClientSession() as session:
+            char_data = []
+            for cid in anilist_ids:
+                # Reusing the fetch logic we discussed earlier
+                data = await gacha_cog.fetch_character_by_id(session, cid)
+                if data:
+                    char_data.append(data)
+                    # Ensure they are in the global cache for pulls
+                    await batch_cache_characters([data])
+            
+            if not char_data:
+                return await ctx.send("❌ Could not fetch data for those IDs.")
 
-@commands.command(name="set_banner")
-@commands.is_owner()
-async def set_banner(self, ctx, days: int, name: str, *anilist_ids: int):
-    """
-    Sets the active banner.
-    Usage: !set_banner <days> <name> <id1> <id2> ...
-    """
-    # 1. Calculate Unix Timestamp
-    end_time = int(time.time() + (days * 86400))
-    
-    gacha_cog = self.bot.get_cog("Gacha")
-    async with aiohttp.ClientSession() as session:
-        char_data = []
-        for cid in anilist_ids:
-            # Reusing the fetch logic we discussed earlier
-            data = await gacha_cog.fetch_character_by_id(session, cid)
-            if data:
-                char_data.append(data)
-                # Ensure they are in the global cache for pulls
-                from core.database import batch_cache_characters
-                await batch_cache_characters([data])
-        
-        if not char_data:
-            return await ctx.send("❌ Could not fetch data for those IDs.")
+            # 2. Generate Banner Image (Pillow)
+            banner_img = await generate_banner_image(char_data, name, end_time)
+            
+            # 3. Update Database
+            pool = await get_db_pool()
+            async with pool.acquire() as conn:
+                # Deactivate current banners
+                await conn.execute("UPDATE banners SET is_active = FALSE")
+                # Insert new banner
+                await conn.execute("""
+                    INSERT INTO banners (name, rate_up_ids, is_active, end_timestamp)
+                    VALUES ($1, $2, TRUE, $3)
+                """, name, list(anilist_ids), end_time)
+            
+            # 4. Success Message with Discord Unix Formatting
+            # <t:timestamp:F> is Full Date, <t:timestamp:R> is Relative
+            display_time = f"<t:{end_time}:F> (<t:{end_time}:R>)"
+            
+            await ctx.send(
+                f"✅ **Banner Active: {name}**\n📅 **Ends:** {display_time}", 
+                file=discord.File(fp=banner_img, filename="banner.png")
+            )
 
-        # 2. Generate Banner Image (Pillow)
-        from core.image_gen import generate_banner_image
-        banner_img = await generate_banner_image(char_data, name)
-        
-        # 3. Update Database
-        pool = await get_db_pool()
-        async with pool.acquire() as conn:
-            # Deactivate current banners
-            await conn.execute("UPDATE banners SET is_active = FALSE")
-            # Insert new banner
-            await conn.execute("""
-                INSERT INTO banners (name, rate_up_ids, is_active, end_timestamp)
-                VALUES ($1, $2, TRUE, $3)
-            """, name, list(anilist_ids), end_time)
-        
-        # 4. Success Message with Discord Unix Formatting
-        # <t:timestamp:F> is Full Date, <t:timestamp:R> is Relative
-        display_time = f"<t:{end_time}:F> (<t:{end_time}:R>)"
-        
-        await ctx.send(
-            f"✅ **Banner Active: {name}**\n📅 **Ends:** {display_time}", 
-            file=discord.File(fp=banner_img, filename="banner.png")
-        )
 async def setup(bot):
     await bot.add_cog(Admin(bot))
-

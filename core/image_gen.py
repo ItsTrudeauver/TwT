@@ -4,6 +4,7 @@ import io
 import os
 import pathlib
 import asyncio
+from datetime import datetime
 
 # --- ROBUST PATH SETUP ---
 # Gets the absolute path of the folder this script is in
@@ -259,7 +260,8 @@ async def generate_team_image(team_list):
     output.seek(0)
     return output
 
- async def generate_banner_image(character_data_list, banner_name, end_timestamp):
+
+async def generate_banner_image(character_data_list, banner_name, end_timestamp):
     """
     Creates a banner image featuring rate-up units and the expiration date.
     """
