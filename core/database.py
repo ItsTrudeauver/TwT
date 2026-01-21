@@ -136,6 +136,8 @@ async def batch_add_to_inventory(user_id, character_ids):
 
 async def batch_cache_characters(chars):
     pool = await get_db_pool()
+    # Ensure we include the default for is_overridden if needed, 
+    # though the DB default FALSE handles it.
     data = [(c['id'], c['name'], c['image_url'], c['rarity'], c['page'], c['favs'], c['true_power'], json.dumps(c.get('tags', []))) for c in chars]
     await pool.executemany("""
         INSERT INTO characters_cache (anilist_id, name, image_url, rarity, rank, base_power, true_power, ability_tags)
