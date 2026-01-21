@@ -187,57 +187,6 @@ class Gacha(commands.Cog):
         except: pass
         return None
 
-    @commands.command(name="current_banner", aliases=["cb"])
-    async def current_banner(self, ctx):
-        """Displays information and the graphic for the active rate-up banner."""
-        pool = await get_db_pool()
-        async with pool.acquire() as conn:
-            # 1. Fetch active banner from the 'banners' table
-            banner = await conn.fetchrow("""
-                SELECT name, rate_up_ids, end_timestamp 
-                FROM banners 
-                WHERE is_active = true 
-                ORDER BY id DESC LIMIT 1
-            """)
-            
-            if not banner:
-                return await ctx.send("ℹ️ No active banner found.")
-
-            # 2. Extract IDs and fetch character details from cache
-            # Handling array format from PostgreSQL (strings in the SQL provided)
-            raw_ids = [int(i) for i in banner['rate_up_ids']]
-            
-            chars = await conn.fetch("""
-                SELECT anilist_id, name, rarity, image_url, true_power, ability_tags 
-                FROM characters_cache 
-                WHERE anilist_id = ANY($1)
-            """, raw_ids)
-
-        if not chars:
-            return await ctx.send("❌ Banner unit data is missing from cache.")
-
-        # 3. Generate banner image using the existing image_gen function
-        from core.image_gen import generate_banner_image
-        async with aiohttp.ClientSession() as session:
-            # Prepare character dicts for the image generator
-            char_list = [dict(c) for c in chars]
-            img_bytes = await generate_banner_image(session, char_list, banner['name'])
-
-        # 4. Construct message content
-        bulleted_list = "\n".join([f"• **{c['name']}**" for c in chars])
-        end_time = int(banner['end_timestamp'])
-        
-        description = (
-            f"### Rate Up Units:\n{bulleted_list}\n\n"
-            f"**Ends in:** <t:{end_time}:R>\n\n"
-            "*During the banner, featured units have a 50% chance of appearing whenever a unit of their rarity is rolled.*"
-        )
-
-        embed = discord.Embed(title=f"✨ {banner['name']} ✨", color=0xFFAA00, description=description)
-        file = discord.File(fp=img_bytes, filename="banner.png")
-        embed.set_image(url="attachment://banner.png")
-
-        await ctx.send(file=file, embed=embed)
         
     @commands.command(name="pull")
     async def pull_character(self, ctx, amount: int = 1):
