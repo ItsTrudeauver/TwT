@@ -90,7 +90,7 @@ class Inventory(commands.Cog):
         view = InventoryPagination(pages, ctx.author)
         await ctx.send(embed=pages[0], view=view)
 
-    @commands.command(name="scrap_all", aliases=["mass_scrap"])
+    @commands.command(name="scrap_all", aliases=["mass_scrap","scall"])
     async def scrap_all(self, ctx):
         """Scraps all unlocked 'R' characters for 200 Gems each."""
         count, reward = await mass_scrap_r_rarity(ctx.author.id)

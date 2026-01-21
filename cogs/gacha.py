@@ -25,6 +25,76 @@ class Gacha(commands.Cog):
         if roll < 15: return "SR", random.randint(251, 1500)
         return "R", random.randint(1501, 10000)
 
+async def get_active_banner(self):
+    pool = await get_db_pool()
+    return await pool.fetchrow("SELECT * FROM banners WHERE is_active = TRUE LIMIT 1")
+
+async def fetch_banner_pull(self, session, banner):
+    """Modified pull logic that accounts for rate-ups."""
+    rarity, page = self.get_rarity_and_page()
+    
+    # If we rolled a high rarity, check for rate-up hit
+    if rarity in ["SSR", "SR"] and random.random() < banner['rate_up_chance']:
+        # Select a random ID from the rate-up list
+        target_id = random.choice(banner['rate_up_ids'])
+        # Use your existing fetch_character_by_id logic (from previous step)
+        return await self.fetch_character_by_id(session, target_id)
+    
+    # Otherwise, proceed with a normal random pull
+    return await self.fetch_character_by_rank(session, rarity, page)
+
+async def fetch_character_by_id(self, session, anilist_id: int):
+        """Fetches a specific character by ID and calculates their rank and rarity."""
+        # 1. Fetch character details
+        char_query = """
+        query ($id: Int) {
+            Character(id: $id) {
+                id
+                name { full }
+                image { large }
+                favourites
+            }
+        }
+        """
+        # 2. Determine Rank (how many characters have more favorites)
+        rank_query = """
+        query ($favs: Int) {
+            Page(perPage: 1) {
+                pageInfo { total }
+                characters(favourites_greater: $favs, sort: FAVOURITES_DESC) { id }
+            }
+        }
+        """
+        
+        try:
+            async with session.post(self.anilist_url, json={'query': char_query, 'variables': {'id': anilist_id}}) as resp:
+                if resp.status != 200: return None
+                char_data = (await resp.json())['data']['Character']
+
+            async with session.post(self.anilist_url, json={'query': rank_query, 'variables': {'favs': char_data['favourites']}}) as resp:
+                # Rank is total characters with more favs + 1
+                rank = (await resp.json())['data']['Page']['pageInfo']['total'] + 1
+
+            # Determine Rarity based on your existing tiers
+            if rank <= 250: rarity = "SSR"
+            elif rank <= 1500: rarity = "SR"
+            else: rarity = "R"
+
+            true_p = calculate_effective_power(char_data['favourites'], rarity, rank)
+            
+            return {
+                'id': char_data['id'],
+                'name': char_data['name']['full'],
+                'image_url': char_data['image']['large'],
+                'favs': char_data['favourites'],
+                'rarity': rarity,
+                'page': rank,
+                'true_power': true_p
+            }
+        except Exception as e:
+            print(f"Admin Fetch Error: {e}")
+            return None
+
     async def fetch_character_by_rank(self, session, rarity, page):
         """Fetches character from AniList and applies the Battle Power Logic."""
         query = """
@@ -156,6 +226,24 @@ class Gacha(commands.Cog):
 
         except Exception as e:
             await ctx.send(f"⚠️ Error: `{e}`")
+# In cogs/gacha.py
 
+async def get_active_banner(self):
+    pool = await get_db_pool()
+    current_time = int(time.time())
+    
+    # Only fetch the banner if it is active AND has not expired
+    banner = await pool.fetchrow("""
+        SELECT * FROM banners 
+        WHERE is_active = TRUE AND end_timestamp > $1 
+        LIMIT 1
+    """, current_time)
+    
+    # If a banner expired but is still marked 'is_active', clean it up
+    if not banner:
+        await pool.execute("UPDATE banners SET is_active = FALSE WHERE is_active = TRUE AND end_timestamp <= $1", current_time)
+        
+    return banner
+    
 async def setup(bot):
     await bot.add_cog(Gacha(bot))

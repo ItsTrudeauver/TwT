@@ -258,3 +258,53 @@ async def generate_team_image(team_list):
     base_img.save(output, format="PNG")
     output.seek(0)
     return output
+
+ async def generate_banner_image(character_data_list, banner_name, end_timestamp):
+    """
+    Creates a banner image featuring rate-up units and the expiration date.
+    """
+    banner_w, banner_h = 800, 450 # Increased height slightly for better text spacing
+    canvas = Image.new('RGB', (banner_w, banner_h), (20, 20, 20))
+    
+    num_chars = len(character_data_list)
+    strip_w = banner_w // num_chars
+
+    async with aiohttp.ClientSession() as session:
+        for i, char in enumerate(character_data_list):
+            async with session.get(char['image_url']) as resp:
+                if resp.status == 200:
+                    img_data = await resp.read()
+                    char_img = Image.open(io.BytesIO(img_data)).convert("RGBA")
+                    
+                    # Resize and Crop logic
+                    aspect = char_img.width / char_img.height
+                    target_h = banner_h
+                    target_w = int(target_h * aspect)
+                    char_img = char_img.resize((target_w, target_h), Image.LANCZOS)
+                    
+                    left = (char_img.width - strip_w) // 2
+                    char_img = char_img.crop((left, 0, left + strip_w, banner_h))
+                    
+                    canvas.paste(char_img, (i * strip_w, 0), char_img)
+
+    # UI Overlay
+    draw = ImageDraw.Draw(canvas)
+    # Path from your project assets
+    font_bold = ImageFont.truetype("assets/fonts/bold_font.ttf", 45)
+    font_small = ImageFont.truetype("assets/fonts/bold_font.ttf", 25)
+    
+    # Semi-transparent footer
+    overlay_h = 100
+    draw.rectangle([0, banner_h - overlay_h, banner_w, banner_h], fill=(0, 0, 0, 180))
+    
+    # Title: Rate Up Name
+    draw.text((20, banner_h - 90), f"RATE UP: {banner_name.upper()}", font=font_bold, fill=(255, 215, 0))
+    
+    # Subtitle: Expiration Date
+    expiry_str = datetime.fromtimestamp(end_timestamp).strftime("%b %d, %Y - %H:%M")
+    draw.text((22, banner_h - 35), f"ENDS: {expiry_str} UTC", font=font_small, fill=(200, 200, 200))
+
+    out = io.BytesIO()
+    canvas.save(out, format="PNG")
+    out.seek(0)
+    return out

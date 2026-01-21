@@ -21,6 +21,17 @@ async def init_db():
     async with pool.acquire() as conn:
         # USERS: Gems, Pity, Starter Flag, Daily Boat Pulls
         await conn.execute("""
+            CREATE TABLE IF NOT EXISTS banners (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                rate_up_ids INTEGER[] NOT NULL,
+                rate_up_chance FLOAT DEFAULT 0.5,
+                is_active BOOLEAN DEFAULT FALSE,
+                end_timestamp BIGINT NOT NULL -- Stores Unix timestamp
+            );
+        """)
+        
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id TEXT PRIMARY KEY,
                 gacha_gems INTEGER DEFAULT 0,
