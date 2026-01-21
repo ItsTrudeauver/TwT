@@ -253,18 +253,30 @@ class Gacha(commands.Cog):
             if not pulled_chars: return await loading.edit(content="❌ Database/API Error.")
 
             await batch_cache_characters(pulled_chars)
-            await batch_add_to_inventory(ctx.author.id, [c['id'] for c in pulled_chars])
+            # Pass full objects to handle scrap logic
+            scrapped_gems = await batch_add_to_inventory(ctx.author.id, pulled_chars)
 
             if amount == 1:
                 c = pulled_chars[0]
-                embed = discord.Embed(title=f"✨ {c['name']}", description=f"**{c['rarity']}** | Power: {c['true_power']:,}", color=0xFFD700)
+                # Fetch new dupe level to show "Boosted Power"
+                pool = await get_db_pool()
+                row = await pool.fetchrow("SELECT dupe_level FROM inventory WHERE user_id = $1 AND anilist_id = $2", str(ctx.author.id), c['id'])
+                dupe_lv = row['dupe_level'] if row else 0
+                boosted_power = int(c['true_power'] * (1 + (dupe_lv * 0.05)))
+                
+                desc = f"**{c['rarity']}** | Power: **{boosted_power:,}** (Lv.{dupe_lv})"
+                if scrapped_gems > 0:
+                    desc += f"\n♻️ **Max Dupes!** Scrapped for **{scrapped_gems:,} Gems**"
+                
+                embed = discord.Embed(title=f"✨ {c['name']}", description=desc, color=0xFFD700)
                 embed.set_image(url=c['image_url'])
                 await loading.delete()
                 await ctx.send(embed=embed)
             else:
                 img = await generate_10_pull_image(pulled_chars)
                 await loading.delete()
-                await ctx.send(file=discord.File(fp=img, filename="10pull.png"))
+                msg = f"♻️ **Auto-scrapped extras for {scrapped_gems:,} Gems!**" if scrapped_gems > 0 else ""
+                await ctx.send(content=msg, file=discord.File(fp=img, filename="10pull.png"))
 
         except Exception as e:
             await ctx.send(f"⚠️ Error: `{e}`")
@@ -287,7 +299,8 @@ class Gacha(commands.Cog):
             if len(chars) < 10: return await loading.edit(content="❌ Sync Error.")
 
             await batch_cache_characters(chars)
-            await batch_add_to_inventory(ctx.author.id, [c['id'] for c in chars])
+            # Pass full objects to handle potential scrap logic (though unlikely for starter)
+            scrapped_gems = await batch_add_to_inventory(ctx.author.id, chars)
             pool = await get_db_pool()
             await pool.execute("UPDATE users SET has_claimed_starter = TRUE WHERE user_id = $1", str(ctx.author.id))
             
