@@ -310,3 +310,96 @@ async def generate_banner_image(character_data_list, banner_name, end_timestamp)
     canvas.save(out, format="PNG")
     out.seek(0)
     return out
+
+async def generate_battle_image(team1, team2, name1, name2, winner_idx=None):
+    """
+    Generates a VS screen.
+    winner_idx: 0 = Draw, 1 = Team 1 Wins, 2 = Team 2 Wins.
+    """
+    # 1. Setup Canvas
+    W, H = 1400, 600
+    canvas = Image.new("RGBA", (W, H), (20, 20, 20, 255))
+    draw = ImageDraw.Draw(canvas)
+    
+    # 2. Helper to fetch and prep cards
+    async def prep_team_cards(team_list, is_right_side=False):
+        tasks = []
+        for char in team_list:
+            if char.get('image_url'):
+                tasks.append(fetch_image(char['image_url']))
+            else:
+                # Placeholder for NPCs with no image
+                tasks.append(asyncio.sleep(0, result=None)) # Return None immediately
+        
+        images = await asyncio.gather(*tasks)
+        cards = []
+        for i, img in enumerate(images):
+            # Inject image object back into data for card creator
+            team_list[i]['image_obj'] = img
+            card = create_character_card(team_list[i])
+            
+            # Mirror enemies to face the player
+            if is_right_side:
+                card = ImageOps.mirror(card)
+            
+            cards.append(card)
+        return cards
+
+    # 3. Process Teams Concurrently
+    cards1, cards2 = await asyncio.gather(
+        prep_team_cards(team1, is_right_side=False),
+        prep_team_cards(team2, is_right_side=True)
+    )
+
+    # 4. Layout Constants
+    card_w, card_h = 200, 300
+    center_x = W // 2
+    
+    # Draw Team 1 (Left Side, Staggered)
+    for i, card in enumerate(cards1):
+        # Stagger logic: 1st unit is front-most
+        x = 50 + (i * 120) 
+        y = 200 if i % 2 == 0 else 150 # Zigzag height
+        
+        # Grey out if they lost (Winner is Team 2)
+        if winner_idx == 2:
+            card = ImageOps.grayscale(card)
+            
+        canvas.paste(card, (x, y), card)
+
+    # Draw Team 2 (Right Side, Staggered, Reverse Order to keep front unit visible)
+    for i, card in enumerate(cards2):
+        x = (W - 250) - (i * 120)
+        y = 200 if i % 2 == 0 else 150
+        
+        if winner_idx == 1:
+            card = ImageOps.grayscale(card)
+            
+        canvas.paste(card, (x, y), card)
+
+    # 5. The "VERSUS" Overlay
+    # Darken Center
+    draw.rectangle([center_x - 100, 0, center_x + 100, H], fill=(0, 0, 0, 100))
+    
+    try:
+        font_vs = ImageFont.truetype(str(FONT_PATH), 100)
+        font_name = ImageFont.truetype(str(FONT_PATH), 40)
+    except:
+        font_vs = font_name = ImageFont.load_default()
+
+    # Draw VS
+    draw.text((center_x - 60, H//2 - 60), "VS", font=font_vs, fill="#FF0000", stroke_width=4, stroke_fill="white")
+    
+    # Draw Names
+    draw.text((50, 50), name1, font=font_name, fill="cyan")
+    
+    # Right align name 2
+    bbox = draw.textbbox((0, 0), name2, font=font_name)
+    n2_w = bbox[2] - bbox[0]
+    draw.text((W - 50 - n2_w, 50), name2, font=font_name, fill="orange")
+
+    # 6. Save
+    out = io.BytesIO()
+    canvas.save(out, format="PNG")
+    out.seek(0)
+    return out

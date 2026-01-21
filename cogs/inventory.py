@@ -7,7 +7,7 @@ class Inventory(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(name="balance", aliases=["bal", "gems", "wallet", "profile"])
+    @commands.command(name="gems", aliases=["gems", "wallet", "profile"])
     async def check_balance(self, ctx):
         """
         Shows your current Gems, Scrap, and Collection stats.

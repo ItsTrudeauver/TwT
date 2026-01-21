@@ -83,4 +83,4 @@ class Help(commands.Cog):
 async def setup(bot):
     # FIXED: removed 'await' from this line
     bot.remove_command("help") 
-    await bot.add_cog(Help(bot))
+    await bot.add_cog(Help(bot))    
