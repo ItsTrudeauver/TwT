@@ -2,13 +2,13 @@ import discord
 from discord.ext import commands
 import math
 import json
-# Added mass_scrap_r_rarity to imports so !scrap_all works
-from core.database import get_db_pool, get_user, mass_scrap_r_rarity 
+from core.database import get_db_pool, get_user, mass_scrap_r_rarity
 
 class Inventory(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
+    # REINSTATED: Aliases ["pc", "wallet", "profile"] as requested
     @commands.command(name="gems", aliases=["pc", "wallet", "profile"])
     async def check_balance(self, ctx):
         """
@@ -32,20 +32,17 @@ class Inventory(commands.Cog):
         unique_chars = stats['unique_chars'] or 0
         total_power = stats['total_power'] or 0
 
-        # 3. Build Embed
         embed = discord.Embed(
             title=f"💳 {ctx.author.display_name}'s Profile",
             color=0x2ECC71
         )
         embed.set_thumbnail(url=ctx.author.display_avatar.url)
 
-        # --- CRASH FIX IS HERE ---
-        # We use .get() to avoid crashing if 'scrap' column doesn't exist yet
-        scrap_amount = user_data.get('scrap', 0) 
-        
+        # --- FIX: REMOVED SCRAP ENTIRELY ---
+        # No more dictionary lookups for 'scrap', so no more crashes.
         embed.add_field(
             name="💰 Currency",
-            value=f"**Gems:** `{user_data['gacha_gems']:,}` 💎\n**Scrap:** `{scrap_amount:,}` 🔩",
+            value=f"**Gems:** `{user_data['gacha_gems']:,}` 💎",
             inline=True
         )
 
@@ -66,7 +63,6 @@ class Inventory(commands.Cog):
         user_id = str(ctx.author.id)
         pool = await get_db_pool()
         
-        # Count total items
         count_val = await pool.fetchval("SELECT COUNT(*) FROM inventory WHERE user_id = $1", user_id)
         if not count_val:
             return await ctx.send("Your inventory is empty! Use `!pull` or `!starter` to get characters.")
@@ -79,7 +75,6 @@ class Inventory(commands.Cog):
 
         offset = (page - 1) * per_page
         
-        # Fetch inventory
         rows = await pool.fetch("""
             SELECT i.id, c.name, c.rarity, c.true_power, i.is_locked
             FROM inventory i
@@ -106,10 +101,6 @@ class Inventory(commands.Cog):
 
     @commands.command(name="view")
     async def view_character(self, ctx, inventory_id: int):
-        """
-        View detailed stats of a specific character in your inventory.
-        Usage: !view [Inventory ID] (The number with # in !inv)
-        """
         pool = await get_db_pool()
         
         row = await pool.fetchrow("""
@@ -131,7 +122,6 @@ class Inventory(commands.Cog):
         embed.add_field(name="DETAILS", value=f"**Rarity:** {row['rarity']}\n**Power:** {row['true_power']:,}\n**Status:** {status}", inline=True)
         embed.add_field(name="META", value=f"**Inv ID:** `{row['id']}`\n**AniList ID:** `{row['anilist_id']}`", inline=True)
         
-        # Parse Skills
         skills = json.loads(row['ability_tags'])
         if skills:
             embed.add_field(name="SKILLS", value="\n".join([f"• {s}" for s in skills]), inline=False)
@@ -142,7 +132,6 @@ class Inventory(commands.Cog):
 
     @commands.command(name="lock")
     async def lock_character(self, ctx, inventory_id: int):
-        """Locks a character."""
         pool = await get_db_pool()
         res = await pool.execute("UPDATE inventory SET is_locked = TRUE WHERE id = $1 AND user_id = $2", inventory_id, str(ctx.author.id))
         
@@ -153,7 +142,6 @@ class Inventory(commands.Cog):
 
     @commands.command(name="unlock")
     async def unlock_character(self, ctx, inventory_id: int):
-        """Unlocks a character."""
         pool = await get_db_pool()
         res = await pool.execute("UPDATE inventory SET is_locked = FALSE WHERE id = $1 AND user_id = $2", inventory_id, str(ctx.author.id))
         
@@ -165,12 +153,15 @@ class Inventory(commands.Cog):
     @commands.command(name="scrap_all", aliases=["mass_scrap"])
     async def scrap_all(self, ctx):
         """Scraps all unlocked 'R' characters."""
-        # This will fail if mass_scrap_r_rarity isn't imported at top of file
-        count, reward = await mass_scrap_r_rarity(ctx.author.id)
-        if count > 0:
-            await ctx.send(f"♻️ Scrapped **{count}** characters for **{reward:,}** Gems!")
-        else:
-            await ctx.send("❌ No unlocked 'R' characters found to scrap.")
+        try:
+            count, reward = await mass_scrap_r_rarity(ctx.author.id)
+            if count > 0:
+                await ctx.send(f"♻️ Scrapped **{count}** characters for **{reward:,}** Gems!")
+            else:
+                await ctx.send("❌ No unlocked 'R' characters found to scrap.")
+        except Exception as e:
+            # Added error handling here just in case mass_scrap crashes too
+            await ctx.send(f"⚠️ Error scrapping: `{e}`")
 
 async def setup(bot):
     await bot.add_cog(Inventory(bot))
