@@ -61,9 +61,25 @@ async def init_db():
                 id SERIAL PRIMARY KEY,
                 user_id TEXT REFERENCES users(user_id),
                 anilist_id INTEGER,
+                dupe_level INTEGER DEFAULT 0, -- 0 = base unit, 1 = first dupe, etc.
                 obtained_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                is_locked BOOLEAN DEFAULT FALSE
+                is_locked BOOLEAN DEFAULT FALSE,
+                UNIQUE(user_id, anilist_id) -- Prevents multiple rows for the same character
             )
+        """)
+
+        # --- MIGRATION GUARDS ---
+        # Ensure existing databases get the column and constraint
+        await conn.execute("ALTER TABLE inventory ADD COLUMN IF NOT EXISTS dupe_level INTEGER DEFAULT 0;")
+        
+        # This adds the unique constraint if it doesn't exist (PostgreSQL 9.1+)
+        await conn.execute("""
+            DO $$ 
+            BEGIN 
+                IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'unique_user_character') THEN
+                    ALTER TABLE inventory ADD CONSTRAINT unique_user_character UNIQUE (user_id, anilist_id);
+                END IF;
+            END $$;
         """)
 
         # TEAMS: Battle squad (5 slots)
@@ -140,8 +156,15 @@ async def add_currency(user_id, amount):
 
 async def batch_add_to_inventory(user_id, character_ids):
     pool = await get_db_pool()
-    data = [(str(user_id), cid) for cid in character_ids]
-    await pool.executemany("INSERT INTO inventory (user_id, anilist_id) VALUES ($1, $2)", data)
+    async with pool.acquire() as conn:
+        # Use ON CONFLICT to increment dupe_level instead of adding rows
+        for cid in character_ids:
+            await conn.execute("""
+                INSERT INTO inventory (user_id, anilist_id, dupe_level)
+                VALUES ($1, $2, 0)
+                ON CONFLICT (user_id, anilist_id) 
+                DO UPDATE SET dupe_level = inventory.dupe_level + 1
+            """, str(user_id), cid)
 
 async def batch_cache_characters(chars):
     pool = await get_db_pool()
@@ -159,16 +182,25 @@ async def batch_cache_characters(chars):
 
 async def get_inventory_details(user_id, sort_by="date"):
     pool = await get_db_pool()
-    # Updated to include ID column
     query = """
-        SELECT i.id, i.anilist_id, c.name, c.true_power, c.rarity, c.rank, 
-               COUNT(*) OVER(PARTITION BY i.anilist_id) as dupe_count
+        SELECT 
+            i.id, 
+            i.anilist_id, 
+            c.name, 
+            -- Calculation: Base Power * (1 + (dupe_level * 0.05))
+            FLOOR(c.true_power * (1 + (i.dupe_level * 0.05))) as true_power, 
+            c.rarity, 
+            c.rank, 
+            i.dupe_level + 1 as dupe_count -- Displaying total units (base + dupes)
         FROM inventory i
         LEFT JOIN characters_cache c ON i.anilist_id = c.anilist_id
         WHERE i.user_id = $1
     """
-    if sort_by == "power": query += " ORDER BY c.true_power DESC"
-    else: query += " ORDER BY i.obtained_at DESC"
+    
+    if sort_by == "power": 
+        query += " ORDER BY true_power DESC"
+    else: 
+        query += " ORDER BY i.obtained_at DESC"
     
     async with pool.acquire() as conn:
         return [dict(r) for r in await conn.fetch(query, str(user_id))]
