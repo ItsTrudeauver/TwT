@@ -79,7 +79,7 @@ class Gacha(commands.Cog):
         """
         
         try:
-            # 1. Fetch Character Data
+            # --- STEP 1: FETCH CHARACTER ---
             async with session.post(self.anilist_url, json={'query': char_query, 'variables': {'id': anilist_id}}) as resp:
                 if resp.status != 200:
                     print(f"⚠️ ID {anilist_id} HTTP Error: {resp.status}")
@@ -87,24 +87,32 @@ class Gacha(commands.Cog):
                 
                 response_json = await resp.json()
                 
-                # CHECK FOR ERRORS IN JSON
                 if 'errors' in response_json:
                     print(f"⚠️ AniList API Error for ID {anilist_id}: {response_json['errors'][0]['message']}")
                     return None
                 
-                # CHECK IF DATA IS NULL
                 if not response_json.get('data') or not response_json['data'].get('Character'):
-                    print(f"⚠️ ID {anilist_id} returned NULL data. (Check if ID is valid)")
+                    print(f"⚠️ ID {anilist_id} returned NULL data.")
                     return None
 
                 char_data = response_json['data']['Character']
 
-            # 2. Fetch Rank Data
+            # --- STEP 2: FETCH RANK (With Safety Checks) ---
             async with session.post(self.anilist_url, json={'query': rank_query, 'variables': {'favs': char_data['favourites']}}) as resp:
+                if resp.status != 200:
+                    print(f"⚠️ Rank Query HTTP Error for ID {anilist_id}: {resp.status}")
+                    return None
+                
                 rank_data = await resp.json()
+
+                # FIX: Check if data exists before accessing it
+                if not rank_data.get('data') or not rank_data['data'].get('Page'):
+                    print(f"⚠️ Rank Query returned NULL data for ID {anilist_id}. (Likely Rate Limit)")
+                    return None
+
                 rank = rank_data['data']['Page']['pageInfo']['total'] + 1
 
-            # 3. Calculate Stats
+            # --- STEP 3: CALCULATE STATS ---
             if rank <= 250: rarity = "SSR"
             elif rank <= 1500: rarity = "SR"
             else: rarity = "R"
@@ -120,9 +128,7 @@ class Gacha(commands.Cog):
                 'page': rank,
                 'true_power': true_p
             }
-
         except Exception as e:
-            # This will now print exactly which ID caused the crash
             print(f"❌ Crash on ID {anilist_id}: {e}")
             return None
 
