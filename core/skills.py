@@ -5,6 +5,13 @@
 # core/skills.py
 
 SKILL_DATA = {
+    "Lucky 7": {
+        "description": "7% chance of +777% power; 77% chance of +7,777 flat power.",
+        "value": 7.77, # Representing the 777% multiplier
+        "applies_in": "b",
+        "stackable": False,
+        "overlap": False
+    },
     "Surge": {
         "description": "Bonus 25% to character power.",
         "value": 0.25,

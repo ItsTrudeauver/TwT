@@ -48,7 +48,15 @@ class SkillHandler:
         if isinstance(tags, str): tags = json.loads(tags)
         
         modified_power = base_power
-
+        if "Lucky 7" in tags:
+            # 7% chance to gain 777% power (multiplier of 8.77)
+            if random.random() < 0.07:
+                modified_power *= 8.77
+            
+            # 77% chance to gain 7777 flat power
+            if random.random() < 0.77:
+                modified_power += 7777
+                
         if "Surge" in tags:
             modified_power *= (1 + SKILL_DATA["Surge"]["value"])
 

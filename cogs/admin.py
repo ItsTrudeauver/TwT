@@ -15,7 +15,7 @@ class Admin(commands.Cog):
 
     @commands.command(name="add_skill")
     @commands.is_owner()
-    async def add_skill(self, ctx, anilist_id: int, skill_name: str):
+    async def add_skill(self, ctx, anilist_id: int, *, skill_name: str):
         skill = get_skill_info(skill_name)
         if not skill:
             await ctx.send(f"❌ Invalid skill. Choose from: `{', '.join(list_all_skills())}`")
