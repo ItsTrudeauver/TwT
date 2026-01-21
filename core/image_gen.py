@@ -235,9 +235,22 @@ async def generate_team_image(team_list):
             draw.text((x + (200 - px_w) / 2, y + 310), p_text, font=font_medium, fill="white")
             
             # Draw Skills
+            import json
             skills = char.get('ability_tags', [])
-            s_text = ", ".join(skills) if skills else "No Skills"
-            s_color = "#AAAAAA" if not skills else "#00FF7F" # Gray for none, Green for active
+            
+            # Robustly handle string vs list and empty arrays
+            if isinstance(skills, str):
+                try:
+                    skills = json.loads(skills)
+                except:
+                    # If it's a raw string like "surge", wrap it in a list
+                    skills = [skills] if skills.strip() else []
+            
+            # Clean up empty elements and format for display
+            active_skills = [str(s).capitalize() for s in skills if s and str(s).strip()]
+            
+            s_text = ", ".join(active_skills) if active_skills else "No Skills"
+            s_color = "#AAAAAA" if not active_skills else "#00FF7F"
             s_bbox = draw.textbbox((0, 0), s_text, font=font_small)
             sx_w = s_bbox[2] - s_bbox[0]
             draw.text((x + (200 - sx_w) / 2, y + 345), s_text, font=font_small, fill=s_color)
@@ -316,9 +329,9 @@ async def generate_battle_image(team1, team2, name1, name2, winner_idx=None):
     Generates a VS screen.
     winner_idx: 0 = Draw, 1 = Team 1 Wins, 2 = Team 2 Wins.
     """
-    # 1. Setup Canvas
-    W, H = 1400, 600
-    canvas = Image.new("RGBA", (W, H), (20, 20, 20, 255))
+    # 1. Setup Canvas (Balanced Height/Width for stacking)
+    W, H = 1200, 850
+    canvas = Image.new("RGBA", (W, H), (15, 15, 15, 255))
     draw = ImageDraw.Draw(canvas)
     
     # 2. Helper to fetch and prep cards
@@ -351,52 +364,44 @@ async def generate_battle_image(team1, team2, name1, name2, winner_idx=None):
         prep_team_cards(team2, is_right_side=True)
     )
 
-    # 4. Layout Constants
+    # 4. Layout Constants (Grid-style positioning)
     card_w, card_h = 200, 300
-    center_x = W // 2
+    gap = 20
+    start_x = (W - (5 * card_w + 4 * gap)) // 2
     
-    # Draw Team 1 (Left Side, Staggered)
+    # Draw Team 1 (Attacker - Top Row)
     for i, card in enumerate(cards1):
-        # Stagger logic: 1st unit is front-most
-        x = 50 + (i * 120) 
-        y = 200 if i % 2 == 0 else 150 # Zigzag height
-        
-        # Grey out if they lost (Winner is Team 2)
-        if winner_idx == 2:
-            card = ImageOps.grayscale(card)
-            
+        x = start_x + (i * (card_w + gap))
+        y = 100
+        if winner_idx == 2: card = ImageOps.grayscale(card)
         canvas.paste(card, (x, y), card)
 
-    # Draw Team 2 (Right Side, Staggered, Reverse Order to keep front unit visible)
+    # Draw Team 2 (Defender - Bottom Row)
     for i, card in enumerate(cards2):
-        x = (W - 250) - (i * 120)
-        y = 200 if i % 2 == 0 else 150
-        
-        if winner_idx == 1:
-            card = ImageOps.grayscale(card)
-            
+        x = start_x + (i * (card_w + gap))
+        y = 500
+        if winner_idx == 1: card = ImageOps.grayscale(card)
         canvas.paste(card, (x, y), card)
 
-    # 5. The "VERSUS" Overlay
-    # Darken Center
-    draw.rectangle([center_x - 100, 0, center_x + 100, H], fill=(0, 0, 0, 100))
-    
+    # 5. Overlay & VS Text
     try:
-        font_vs = ImageFont.truetype(str(FONT_PATH), 100)
-        font_name = ImageFont.truetype(str(FONT_PATH), 40)
+        font_vs = ImageFont.truetype(str(FONT_PATH), 120)
+        font_name = ImageFont.truetype(str(FONT_PATH), 45)
     except:
         font_vs = font_name = ImageFont.load_default()
 
-    # Draw VS
-    draw.text((center_x - 60, H//2 - 60), "VS", font=font_vs, fill="#FF0000", stroke_width=4, stroke_fill="white")
+    # Central VS Logo
+    vs_text = "V S"
+    v_bbox = draw.textbbox((0, 0), vs_text, font=font_vs)
+    v_w = v_bbox[2] - v_bbox[0]
+    draw.text(((W - v_w) // 2, 400), vs_text, font=font_vs, fill="#FF4500", stroke_width=2, stroke_fill="white")
     
-    # Draw Names
-    draw.text((50, 50), name1, font=font_name, fill="cyan")
+    # Names positioned near their respective teams
+    draw.text((start_x, 40), f"PLAYER: {name1.upper()}", font=font_name, fill="cyan")
     
-    # Right align name 2
-    bbox = draw.textbbox((0, 0), name2, font=font_name)
-    n2_w = bbox[2] - bbox[0]
-    draw.text((W - 50 - n2_w, 50), name2, font=font_name, fill="orange")
+    bbox2 = draw.textbbox((0, 0), f"OPPONENT: {name2.upper()}", font=font_name)
+    n2_w = bbox2[2] - bbox2[0]
+    draw.text((W - start_x - n2_w, 440), f"OPPONENT: {name2.upper()}", font=font_name, fill="orange")
 
     # 6. Save
     out = io.BytesIO()
