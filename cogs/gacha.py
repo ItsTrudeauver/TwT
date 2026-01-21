@@ -59,7 +59,6 @@ class Gacha(commands.Cog):
 
     async def fetch_character_by_id(self, session, anilist_id: int):
         """Fetches a specific character by ID and calculates their rank and rarity."""
-        # 1. Fetch character details
         char_query = """
         query ($id: Int) {
             Character(id: $id) {
@@ -70,7 +69,6 @@ class Gacha(commands.Cog):
             }
         }
         """
-        # 2. Determine Rank (how many characters have more favorites)
         rank_query = """
         query ($favs: Int) {
             Page(perPage: 1) {
@@ -81,15 +79,32 @@ class Gacha(commands.Cog):
         """
         
         try:
+            # 1. Fetch Character Data
             async with session.post(self.anilist_url, json={'query': char_query, 'variables': {'id': anilist_id}}) as resp:
-                if resp.status != 200: return None
-                char_data = (await resp.json())['data']['Character']
+                if resp.status != 200:
+                    print(f"⚠️ ID {anilist_id} HTTP Error: {resp.status}")
+                    return None
+                
+                response_json = await resp.json()
+                
+                # CHECK FOR ERRORS IN JSON
+                if 'errors' in response_json:
+                    print(f"⚠️ AniList API Error for ID {anilist_id}: {response_json['errors'][0]['message']}")
+                    return None
+                
+                # CHECK IF DATA IS NULL
+                if not response_json.get('data') or not response_json['data'].get('Character'):
+                    print(f"⚠️ ID {anilist_id} returned NULL data. (Check if ID is valid)")
+                    return None
 
+                char_data = response_json['data']['Character']
+
+            # 2. Fetch Rank Data
             async with session.post(self.anilist_url, json={'query': rank_query, 'variables': {'favs': char_data['favourites']}}) as resp:
-                # Rank is total characters with more favs + 1
-                rank = (await resp.json())['data']['Page']['pageInfo']['total'] + 1
+                rank_data = await resp.json()
+                rank = rank_data['data']['Page']['pageInfo']['total'] + 1
 
-            # Determine Rarity based on existing tiers
+            # 3. Calculate Stats
             if rank <= 250: rarity = "SSR"
             elif rank <= 1500: rarity = "SR"
             else: rarity = "R"
@@ -105,8 +120,10 @@ class Gacha(commands.Cog):
                 'page': rank,
                 'true_power': true_p
             }
+
         except Exception as e:
-            print(f"Admin Fetch Error: {e}")
+            # This will now print exactly which ID caused the crash
+            print(f"❌ Crash on ID {anilist_id}: {e}")
             return None
 
     async def fetch_character_by_rank(self, session, rarity, page):
