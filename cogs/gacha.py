@@ -187,6 +187,41 @@ class Gacha(commands.Cog):
         except: pass
         return None
 
+    @commands.command(name="banner")
+    async def current_banner(self, ctx):
+        """Displays the currently active gacha banner."""
+        # 1. Retrieve the active banner record from the database
+        banner = await self.get_active_banner()
+        if not banner:
+            return await ctx.send("🎫 No banner is currently active.")
+
+        loading = await ctx.send("🔍 *Retrieving banner details...*")
+        
+        try:
+            # 2. Fetch metadata (especially image URLs) for each rate-up ID
+            async with aiohttp.ClientSession() as session:
+                tasks = [self.fetch_character_by_id(session, cid) for cid in banner['rate_up_ids']]
+                # fetch_character_by_id returns a dict with 'image_url'
+                character_list = [c for c in await asyncio.gather(*tasks) if c]
+
+            if not character_list:
+                return await loading.edit(content="❌ Could not fetch character data from the API.")
+
+            # 3. Generate the image using the existing image_gen utility
+            # Ensure generate_banner_image is imported from core.image_gen
+            from core.image_gen import generate_banner_image
+            img_output = await generate_banner_image(
+                character_list, 
+                banner['name'], 
+                banner['end_timestamp']
+            )
+            
+            # 4. Clean up and send the image
+            await loading.delete()
+            await ctx.send(file=discord.File(fp=img_output, filename="banner.png"))
+            
+        except Exception as e:
+            await ctx.send(f"⚠️ Error displaying banner: `{e}`")
         
     @commands.command(name="pull")
     async def pull_character(self, ctx, amount: int = 1):
