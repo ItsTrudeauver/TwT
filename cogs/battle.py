@@ -104,14 +104,27 @@ class Battle(commands.Cog):
         atk_power = sum(SkillHandler.apply_individual_battle_skills(c['true_power'], c) for i, c in enumerate(attacker_team) if i not in def_ignore)
         def_power = sum(SkillHandler.apply_individual_battle_skills(c['true_power'], c) for i, c in enumerate(defender_team) if i not in atk_ignore)
 
-        atk_final = SkillHandler.apply_team_battle_mods(atk_power, def_active)
-        def_final = SkillHandler.apply_team_battle_mods(def_power, atk_active)
+        # 1. Apply team mods and then random variance (0.9 to 1.1) independently
+        atk_final = SkillHandler.apply_team_battle_mods(atk_power, def_active) * random.uniform(0.9, 1.1)
+        def_final = SkillHandler.apply_team_battle_mods(def_power, atk_active) * random.uniform(0.9, 1.1)
 
-        winner_label, chance = simulate_standoff(atk_final, def_final)
+        # 2. Deterministic Winner: The higher final power number wins
+        if atk_final > def_final:
+            winner_label = "Player A"
+        elif def_final > atk_final:
+            winner_label = "Player B"
+        else:
+            winner_label = "Draw"
+
+        # 3. Handle skill-based revives or overrides
         final_result = SkillHandler.handle_revive(winner_label == "Player A", atk_active)
 
         # 0 = Draw, 1 = Player Wins, 2 = Player Loses
         win_code = 1 if final_result == "WIN" else (2 if final_result == "LOSS" else 0)
+
+        # Calculate 'chance' for the UI footer based on the final randomized values
+        total_final = atk_final + def_final
+        chance = (atk_final / total_final * 100) if total_final > 0 else 50.0
 
         # --- DB UPDATE ---
         pool = await get_db_pool()
