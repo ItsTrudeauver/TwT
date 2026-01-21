@@ -13,7 +13,7 @@ class Battle(commands.Cog):
         self.bot = bot
 
     async def get_team_for_battle(self, user_id):
-        """Fetches a user's battle team with full stats."""
+        """Fetches a user's battle team with full stats including duplicate boosts."""
         pool = await get_db_pool()
         async with pool.acquire() as conn:
             team_row = await conn.fetchrow("SELECT slot_1, slot_2, slot_3, slot_4, slot_5 FROM teams WHERE user_id = $1", str(user_id))
@@ -22,9 +22,16 @@ class Battle(commands.Cog):
             slot_ids = [v for v in team_row.values() if v is not None]
             if not slot_ids: return []
 
-            # UPDATED SQL: Now fetches 'image_url'
+            # UPDATED SQL: Calculates boosted power based on i.dupe_level
             chars = await conn.fetch("""
-                SELECT i.id, c.name, c.true_power, c.ability_tags, c.rarity, c.rank, c.image_url
+                SELECT 
+                    i.id, 
+                    c.name, 
+                    FLOOR(c.true_power * (1 + (i.dupe_level * 0.05))) as true_power, 
+                    c.ability_tags, 
+                    c.rarity, 
+                    c.rank, 
+                    c.image_url
                 FROM inventory i
                 JOIN characters_cache c ON i.anilist_id = c.anilist_id
                 WHERE i.id = ANY($1)

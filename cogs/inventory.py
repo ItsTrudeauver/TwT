@@ -26,12 +26,19 @@ class InventoryView(discord.ui.View):
         user_data = await get_user(self.user.id)
         
         offset = (self.page - 1) * self.per_page
+        # UPDATED SQL: Includes dupe_level and calculates boosted power for sorting/display
         rows = await self.pool.fetch("""
-            SELECT i.id, c.name, c.rarity, c.true_power, i.is_locked
+            SELECT 
+                i.id, 
+                c.name, 
+                c.rarity, 
+                i.is_locked, 
+                i.dupe_level,
+                FLOOR(c.true_power * (1 + (i.dupe_level * 0.05))) as true_power
             FROM inventory i
             JOIN characters_cache c ON i.anilist_id = c.anilist_id
             WHERE i.user_id = $1
-            ORDER BY c.true_power DESC, i.obtained_at DESC
+            ORDER BY true_power DESC, i.obtained_at DESC
             LIMIT $2 OFFSET $3
         """, user_id_str, self.per_page, offset)
 
@@ -46,7 +53,11 @@ class InventoryView(discord.ui.View):
             for row in rows:
                 lock = "🔒" if row['is_locked'] else ""
                 rarity = "🌟" if row['rarity'] == "SSR" else "✨" if row['rarity'] == "SR" else "⚪"
-                embed.description += f"`#{row['id']}` {lock} **{row['name']}** {rarity} — ⚔️ `{row['true_power']:,}`\n"
+                
+                # UPDATED: Add dupe count display next to the name
+                dupe_text = f" (+{row['dupe_level']})" if row['dupe_level'] > 0 else ""
+                
+                embed.description += f"`#{row['id']}` {lock} **{row['name']}**{dupe_text} {rarity} — ⚔️ `{row['true_power']:,}`\n"
 
         embed.set_footer(text=f"Page {self.page} of {self.max_pages} | Use !view [ID]")
         return embed
@@ -94,8 +105,18 @@ class Inventory(commands.Cog):
     @commands.command(name="view")
     async def view_character(self, ctx, inventory_id: int):
         pool = await get_db_pool()
+        # UPDATED SQL: Pulls dupe_level and calculates boosted power
         row = await pool.fetchrow("""
-            SELECT i.id, c.name, c.image_url, c.rarity, c.true_power, c.ability_tags, i.is_locked, c.anilist_id
+            SELECT 
+                i.id, 
+                c.name, 
+                c.image_url, 
+                c.rarity, 
+                c.ability_tags, 
+                i.is_locked, 
+                c.anilist_id, 
+                i.dupe_level,
+                FLOOR(c.true_power * (1 + (i.dupe_level * 0.05))) as true_power
             FROM inventory i
             JOIN characters_cache c ON i.anilist_id = c.anilist_id
             WHERE i.id = $1 AND i.user_id = $2
@@ -108,7 +129,15 @@ class Inventory(commands.Cog):
         if row['image_url']: embed.set_image(url=row['image_url'])
         
         status = "🔒 Locked" if row['is_locked'] else "🔓 Unlocked"
-        embed.add_field(name="DETAILS", value=f"**Rarity:** {row['rarity']}\n**Power:** {row['true_power']:,}\n**Status:** {status}", inline=True)
+        
+        # UPDATED: Added Dupes count to the field list and corrected power display
+        details = (
+            f"**Rarity:** {row['rarity']}\n"
+            f"**Power:** {row['true_power']:,}\n"
+            f"**Dupes:** {row['dupe_level']}\n"
+            f"**Status:** {status}"
+        )
+        embed.add_field(name="DETAILS", value=details, inline=True)
         
         skills = json.loads(row['ability_tags'])
         embed.add_field(name="SKILLS", value="\n".join([f"• {s}" for s in skills]) if skills else "*None*", inline=False)

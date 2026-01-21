@@ -28,22 +28,29 @@ class RPG(commands.Cog):
                     team_list.append(None)
                     continue
                 
+                # UPDATED: This query now pulls dupe_level from inventory to calculate boosted power
                 char_data = await conn.fetchrow("""
-                    SELECT c.name, c.image_url, c.true_power, c.rarity, c.rarity_override, c.ability_tags 
+                    SELECT 
+                        c.name, 
+                        c.image_url, 
+                        FLOOR(c.true_power * (1 + (i.dupe_level * 0.05))) as true_power, 
+                        c.rarity, 
+                        c.rarity_override, 
+                        c.ability_tags 
                     FROM inventory i
                     JOIN characters_cache c ON i.anilist_id = c.anilist_id
                     WHERE i.id = $1
                 """, char_id)
                 
                 if char_data:
-                    power = char_data['true_power']
+                    power = int(char_data['true_power'])
                     total_power += power
                     team_list.append({
                         'name': char_data['name'], 
                         'image_url': char_data['image_url'], 
                         'rarity': char_data['rarity_override'] or char_data['rarity'], 
                         'power': power,
-                        'ability_tags': char_data['ability_tags'] # Now passing skills to the generator
+                        'ability_tags': char_data['ability_tags']
                     })
                 else:
                     team_list.append(None)
