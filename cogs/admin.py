@@ -169,22 +169,32 @@ class Admin(commands.Cog):
             # Check if character exists in cache, otherwise fetch basic info first
             char = await conn.fetchrow("SELECT name FROM characters_cache WHERE anilist_id = $1", anilist_id)
             
+            # 1. If not in cache, fetch metadata from AniList first
             if not char:
                 gacha_cog = self.bot.get_cog("Gacha")
                 async with aiohttp.ClientSession() as session:
-                    data = await gacha_cog.fetch_character_by_id(session, anilist_id)
-                if not data: return await ctx.send("❌ Could not find that unit on AniList.")
-                # We'll update the data dict with our override before initial cache
-                data['rarity'] = rarity
-                data['true_power'] = power
-                await batch_cache_characters([data])
-            
-            # Set the override flag and stats
-            await conn.execute("""
-                UPDATE characters_cache 
-                SET rarity = $1, true_power = $2, is_overridden = TRUE 
-                WHERE anilist_id = $3
-            """, rarity, power, anilist_id)
+                    api_data = await gacha_cog.fetch_character_by_id(session, anilist_id)
+                if not api_data: 
+                    return await ctx.send("❌ Could not find that unit on AniList.")
+                
+                # Use a direct UPSERT to create the record with the override flag set
+                await conn.execute("""
+                    INSERT INTO characters_cache (anilist_id, name, image_url, rarity, true_power, is_overridden)
+                    VALUES ($1, $2, $3, $4, $5, TRUE)
+                    ON CONFLICT (anilist_id) DO UPDATE 
+                    SET rarity = EXCLUDED.rarity, 
+                        true_power = EXCLUDED.true_power, 
+                        is_overridden = TRUE
+                """, anilist_id, api_data['name'], api_data['image_url'], rarity, power)
+                name = api_data['name']
+            else:
+                # 2. If it is already in cache, just update the existing row
+                await conn.execute("""
+                    UPDATE characters_cache 
+                    SET rarity = $1, true_power = $2, is_overridden = TRUE 
+                    WHERE anilist_id = $3
+                """, rarity, power, anilist_id)
+                name = char['name']
             
             name = char['name'] if char else data['name']
             await ctx.send(f"✅ **{name}** (ID: {anilist_id}) overridden to **{rarity}** with **{power:,} Power**.")
