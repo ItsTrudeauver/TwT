@@ -75,7 +75,7 @@ class Inventory(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(name="gems", aliases=["pc", "wallet", "profile", "bal", "balance"])
+    @commands.command(name="gems", aliases=["pc", "wallet", "profile"])
     async def check_balance(self, ctx):
         user_data = await get_user(ctx.author.id)
         await ctx.send(f"💎 {ctx.author.mention}, you currently have **{user_data['gacha_gems']:,}** Gems.")

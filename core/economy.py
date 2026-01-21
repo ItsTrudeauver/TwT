@@ -3,11 +3,12 @@
 import os
 import aiohttp
 import datetime
+import asyncio
 from core.database import get_db_pool
 
 # --- CONSTANTS ---
 GEMS_PER_PULL = 1000  # 1 Multi = 10,000 Gems
-BOAT_COST_PER_PULL = 100_000_000 # 10 Million
+BOAT_COST_PER_PULL = 100_000_000 # 100 Million
 MAX_BOAT_PULLS_DAILY = 10
 UNBELIEVABOAT_TOKEN = os.getenv("UNBELIEVABOAT_TOKEN")
 ECONOMY_GUILD_ID = int(os.getenv("ECONOMY_GUILD_ID", 0))
@@ -55,45 +56,66 @@ class Economy:
     async def buy_pulls_with_boat(user_id, guild_id, count):
         """
         Interacts with Unbelievaboat API to buy pulls.
-        10M credits = 1 Pull. Max 10 per day.
+        100M credits = 1 Pull. Max 10 per day.
         """
-        if count <= 0 or count > MAX_BOAT_PULLS_DAILY:
-            return {"success": False, "message": f"You can only buy 1 to {MAX_BOAT_PULLS_DAILY} pulls."}
+        try:
+            if count <= 0 or count > MAX_BOAT_PULLS_DAILY:
+                return {"success": False, "message": f"You can only buy 1 to {MAX_BOAT_PULLS_DAILY} pulls."}
 
-        pool = await get_db_pool()
-        async with pool.acquire() as conn:
-            # Check Daily Limit
-            user = await conn.fetchrow("SELECT daily_boat_pulls, last_boat_pull_at FROM users WHERE user_id = $1", str(user_id))
-            now = datetime.datetime.utcnow()
-            
-            # Reset daily counter if it's a new day
-            current_pulls = user['daily_boat_pulls'] if user['last_boat_pull_at'].date() == now.date() else 0
-            
-            if current_pulls + count > MAX_BOAT_PULLS_DAILY:
-                return {"success": False, "message": f"Daily limit reached. You have {MAX_BOAT_PULLS_DAILY - current_pulls} pulls left for today."}
+            pool = await get_db_pool()
+            async with pool.acquire() as conn:
+                # Check Daily Limit
+                user = await conn.fetchrow("SELECT daily_boat_pulls, last_boat_pull_at FROM users WHERE user_id = $1", str(user_id))
+                
+                if not user:
+                    return {"success": False, "message": "User profile not found. Please use the bot first."}
 
-            # Unbelievaboat API Call
-            total_cost = count * BOAT_COST_PER_PULL
-            headers = {"Authorization": UNBELIEVABOAT_TOKEN, "Accept": "application/json"}
-            url = f"https://unbelievaboat.com/api/v1/guilds/{guild_id}/users/{user_id}"
-            
-            async with aiohttp.ClientSession() as session:
-                # Deduct money (negative value in the 'bank' or 'cash' field depending on API usage)
-                # We use the PATCH method to update balance
-                data = {"bank": -total_cost}
-                async with session.patch(url, headers=headers, json=data) as resp:
-                    if resp.status != 200:
-                        error_data = await resp.json()
-                        return {"success": False, "message": f"Unbelievaboat Error: {error_data.get('message', 'Insufficient funds in bank.')}"}
+                now = datetime.datetime.utcnow()
+                
+                # FIX: Handle case where last_boat_pull_at is None (new users)
+                last_pull_at = user['last_boat_pull_at']
+                current_pulls = user['daily_boat_pulls'] if last_pull_at and last_pull_at.date() == now.date() else 0
+                
+                if current_pulls + count > MAX_BOAT_PULLS_DAILY:
+                    return {"success": False, "message": f"Daily limit reached. You have {MAX_BOAT_PULLS_DAILY - current_pulls} pulls left for today."}
 
-            # Update DB
-            await conn.execute("""
-                UPDATE users 
-                SET gacha_gems = gacha_gems + $1, 
-                    daily_boat_pulls = $2, 
-                    last_boat_pull_at = $3,
-                    boat_credits_spent = boat_credits_spent + $4
-                WHERE user_id = $5
-            """, (count * GEMS_PER_PULL), (current_pulls + count), now, total_cost, str(user_id))
+                # Unbelievaboat API Call
+                total_cost = count * BOAT_COST_PER_PULL
+                
+                if not UNBELIEVABOAT_TOKEN:
+                    return {"success": False, "message": "Unbelievaboat API token is not configured."}
 
-        return {"success": True, "amount": count * GEMS_PER_PULL}
+                headers = {"Authorization": UNBELIEVABOAT_TOKEN, "Accept": "application/json"}
+                
+                # Use ECONOMY_GUILD_ID from variables if set, otherwise fall back to command's guild
+                target_guild_id = ECONOMY_GUILD_ID if ECONOMY_GUILD_ID != 0 else guild_id
+                url = f"https://unbelievaboat.com/api/v1/guilds/{target_guild_id}/users/{user_id}"
+                
+                # FIX: Added timeout to prevent the command from being stuck forever on network issues
+                timeout = aiohttp.ClientTimeout(total=15)
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    data = {"bank": -total_cost}
+                    async with session.patch(url, headers=headers, json=data) as resp:
+                        if resp.status != 200:
+                            try:
+                                error_data = await resp.json()
+                                error_msg = error_data.get('message', 'Insufficient funds in bank.')
+                            except:
+                                error_msg = f"HTTP {resp.status} Error"
+                            return {"success": False, "message": f"Unbelievaboat Error: {error_msg}"}
+
+                # Update DB
+                await conn.execute("""
+                    UPDATE users 
+                    SET gacha_gems = gacha_gems + $1, 
+                        daily_boat_pulls = $2, 
+                        last_boat_pull_at = $3,
+                        boat_credits_spent = boat_credits_spent + $4
+                    WHERE user_id = $5
+                """, (count * GEMS_PER_PULL), (current_pulls + count), now, total_cost, str(user_id))
+
+            return {"success": True, "amount": count * GEMS_PER_PULL}
+
+        except Exception as e:
+            # This ensures that if ANY logic fails, the command receives an error instead of hanging
+            return {"success": False, "message": f"An unexpected system error occurred: {str(e)}"}

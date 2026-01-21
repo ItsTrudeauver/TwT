@@ -9,11 +9,9 @@ def squash_with_caps(value, soft_cap, hard_cap):
         return value
     
     excess = value - soft_cap
-    # Tuning factor: controls how 'fast' we approach the hard cap wall.
-    # Higher = slower approach.
+
     factor = (hard_cap - soft_cap) * 1.2
-    
-    # Asymptotic approach: SoftCap + (Margin * (1 - 1/(1 + excess/factor)))
+
     margin = hard_cap - soft_cap
     squashed = soft_cap + margin * (1 - (1 / (1 + (excess / factor))))
     
