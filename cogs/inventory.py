@@ -4,10 +4,10 @@ import math
 import json
 from core.database import get_db_pool, get_user, mass_scrap_r_rarity
 
-# --- BUTTON VIEW CLASS ---
 class InventoryView(discord.ui.View):
     def __init__(self, bot, user, pool, per_page=10):
-        super().__init__(timeout=60) # Buttons expire after 60 seconds
+        # Setting timeout to None so buttons don't die
+        super().__init__(timeout=None)
         self.bot = bot
         self.user = user
         self.pool = pool
@@ -16,15 +16,15 @@ class InventoryView(discord.ui.View):
         self.max_pages = 1
 
     async def get_page_content(self):
-        """Fetches data and builds the embed for the current page."""
-        # 1. Get counts
-        count_val = await self.pool.fetchval("SELECT COUNT(*) FROM inventory WHERE user_id = $1", str(self.user.id))
-        self.max_pages = math.ceil(count_val / (self.per_page or 1)) or 1
+        user_id_str = str(self.user.id)
+        # 1. Force recalculate max pages
+        count_val = await self.pool.fetchval("SELECT COUNT(*) FROM inventory WHERE user_id = $1", user_id_str)
+        count_val = count_val or 0
+        self.max_pages = math.ceil(count_val / self.per_page)
+        if self.max_pages < 1: self.max_pages = 1
         
-        # 2. Get user gems
         user_data = await get_user(self.user.id)
         
-        # 3. Get characters
         offset = (self.page - 1) * self.per_page
         rows = await self.pool.fetch("""
             SELECT i.id, c.name, c.rarity, c.true_power, i.is_locked
@@ -33,16 +33,15 @@ class InventoryView(discord.ui.View):
             WHERE i.user_id = $1
             ORDER BY c.true_power DESC, i.obtained_at DESC
             LIMIT $2 OFFSET $3
-        """, str(self.user.id), self.per_page, offset)
+        """, user_id_str, self.per_page, offset)
 
-        # 4. Build Embed
         embed = discord.Embed(title=f"🎒 {self.user.display_name}'s Inventory", color=0x3498DB)
         embed.description = f"💎 **Gems:** `{user_data['gacha_gems']:,}`\n"
         embed.description += f"📦 **Total Units:** `{count_val}`\n"
         embed.description += "─" * 25 + "\n"
 
         if not rows:
-            embed.description += "*Empty Page*"
+            embed.description += "*No characters found on this page.*"
         else:
             for row in rows:
                 lock = "🔒" if row['is_locked'] else ""
@@ -53,31 +52,25 @@ class InventoryView(discord.ui.View):
         return embed
 
     def update_buttons(self):
-        """Disables buttons if at the start or end."""
-        self.prev_button.disabled = (self.page == 1)
-        self.next_button.disabled = (self.page == self.max_pages)
+        # Disable "Previous" if on page 1
+        self.prev_button.disabled = (self.page <= 1)
+        # Disable "Next" if on the last page or if there's only 1 page
+        self.next_button.disabled = (self.page >= self.max_pages)
 
-    @discord.ui.button(label="⬅️ Previous", style=discord.ButtonStyle.grey)
+    @discord.ui.button(label="⬅️ Previous", style=discord.ButtonStyle.primary)
     async def prev_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.user.id:
-            return await interaction.response.send_message("This is not your inventory!", ephemeral=True)
-        
         self.page -= 1
-        self.update_buttons()
         embed = await self.get_page_content()
+        self.update_buttons()
         await interaction.response.edit_message(embed=embed, view=self)
 
-    @discord.ui.button(label="Next ➡️", style=discord.ButtonStyle.grey)
+    @discord.ui.button(label="Next ➡️", style=discord.ButtonStyle.primary)
     async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.user.id:
-            return await interaction.response.send_message("This is not your inventory!", ephemeral=True)
-        
         self.page += 1
-        self.update_buttons()
         embed = await self.get_page_content()
+        self.update_buttons()
         await interaction.response.edit_message(embed=embed, view=self)
 
-# --- MAIN COG ---
 class Inventory(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -89,17 +82,13 @@ class Inventory(commands.Cog):
 
     @commands.command(name="inventory", aliases=["inv"])
     async def show_inventory(self, ctx):
-        """Displays your inventory with UI buttons for pagination."""
         pool = await get_db_pool()
-        
-        # Initialize the button view
         view = InventoryView(self.bot, ctx.author, pool)
+        
+        # We MUST fetch content first so max_pages is calculated BEFORE update_buttons
+        embed = await view.get_page_content()
         view.update_buttons()
         
-        # Get the first page
-        embed = await view.get_page_content()
-        
-        # Send the message with the View
         await ctx.send(embed=embed, view=view)
 
     @commands.command(name="view")
@@ -113,14 +102,13 @@ class Inventory(commands.Cog):
         """, inventory_id, str(ctx.author.id))
 
         if not row:
-            return await ctx.send("❌ Character not found in your inventory.")
+            return await ctx.send("❌ Character not found.")
 
         embed = discord.Embed(title=f"{row['name']}", color=0xF1C40F if row['rarity'] == "SSR" else 0x9B59B6)
         if row['image_url']: embed.set_image(url=row['image_url'])
         
         status = "🔒 Locked" if row['is_locked'] else "🔓 Unlocked"
         embed.add_field(name="DETAILS", value=f"**Rarity:** {row['rarity']}\n**Power:** {row['true_power']:,}\n**Status:** {status}", inline=True)
-        embed.add_field(name="META", value=f"**Inv ID:** `{row['id']}`\n**AniList ID:** `{row['anilist_id']}`", inline=True)
         
         skills = json.loads(row['ability_tags'])
         embed.add_field(name="SKILLS", value="\n".join([f"• {s}" for s in skills]) if skills else "*None*", inline=False)
@@ -129,22 +117,19 @@ class Inventory(commands.Cog):
     @commands.command(name="lock")
     async def lock_character(self, ctx, inventory_id: int):
         pool = await get_db_pool()
-        res = await pool.execute("UPDATE inventory SET is_locked = TRUE WHERE id = $1 AND user_id = $2", inventory_id, str(ctx.author.id))
-        await ctx.send(f"🔒 Character `#{inventory_id}` has been **LOCKED**." if res == "UPDATE 1" else "❌ Not found.")
+        await pool.execute("UPDATE inventory SET is_locked = TRUE WHERE id = $1 AND user_id = $2", inventory_id, str(ctx.author.id))
+        await ctx.send(f"🔒 Character `#{inventory_id}` locked.")
 
     @commands.command(name="unlock")
     async def unlock_character(self, ctx, inventory_id: int):
         pool = await get_db_pool()
-        res = await pool.execute("UPDATE inventory SET is_locked = FALSE WHERE id = $1 AND user_id = $2", inventory_id, str(ctx.author.id))
-        await ctx.send(f"🔓 Character `#{inventory_id}` has been **UNLOCKED**." if res == "UPDATE 1" else "❌ Not found.")
+        await pool.execute("UPDATE inventory SET is_locked = FALSE WHERE id = $1 AND user_id = $2", inventory_id, str(ctx.author.id))
+        await ctx.send(f"🔓 Character `#{inventory_id}` unlocked.")
 
     @commands.command(name="scrap_all", aliases=["mass_scrap"])
     async def scrap_all(self, ctx):
-        try:
-            count, reward = await mass_scrap_r_rarity(ctx.author.id)
-            await ctx.send(f"♻️ Scrapped **{count}** characters for **{reward:,}** Gems!" if count > 0 else "❌ No unlocked 'R' found.")
-        except Exception as e:
-            await ctx.send(f"⚠️ Error: `{e}`")
+        count, reward = await mass_scrap_r_rarity(ctx.author.id)
+        await ctx.send(f"♻️ Scrapped {count} units for {reward:,} Gems!" if count > 0 else "❌ No units to scrap.")
 
 async def setup(bot):
     await bot.add_cog(Inventory(bot))
