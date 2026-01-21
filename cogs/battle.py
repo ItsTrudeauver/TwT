@@ -65,7 +65,7 @@ class Battle(commands.Cog):
         attacker_team = await self.get_team_for_battle(user_id)
         
         if not attacker_team:
-            return await ctx.send("❌ Your battle team is empty! Use `!set_team` first.")
+            return await ctx.send("❌ Your battle team is empty! Use `!set_team_battle <id1> <id2> ... <id5>` first. Check your unit id (not to be confused with anilist id) with !inv")
 
         opponent = None
         difficulty = None
