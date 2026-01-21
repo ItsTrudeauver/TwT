@@ -1,0 +1,44 @@
+---
+title: "Passive Income: Expeditions"
+description: "Master the art of earning gems while offline through team synergies."
+---
+
+Expeditions are the primary engine for generating wealth. Unlike active tasks, your earnings scale based on real-world time and the specific skills of the characters you own.
+
+### Setting the Squad
+Your Expedition Squad is separate from your Battle Squad. You can assign up to 5 characters to this roster.
+
+**The Setup Command**
+Use `!set_expedition` (or `!se`) followed by the unique IDs from your inventory.
+> `!se 102 45 8 201 55`
+
+### Managing the Mission
+Once your team is assigned, use the `!ex` subcommands to handle the mission:
+
+- **!ex start**: Begins the expedition timer.
+- **!ex status**: Checks your current elapsed time and estimated gem yield.
+- **!ex claim**: Ends the mission and deposits gems. 
+
+<Warning>
+  Missions must run for a minimum of 60 seconds. Claiming early will result in 0 gems and reset your timer.
+</Warning>
+
+---
+
+### The Multiplier Meta
+Your final payout is calculated by stacking three distinct types of bonuses.
+
+**Active Skill: Hardworker**
+- **Bonus**: +15% per unit.
+- **Requirement**: The character must be physically assigned to the Expedition Squad.
+- **Effect**: If 5 units with this skill are deployed, you gain a +75% bonus.
+
+**Global Skill: Master of Coin**
+- **Bonus**: +10% per unit.
+- **Requirement**: None. This is a passive global buff.
+- **Effect**: As long as these units are in your inventory, the bonus stacks. You do not need to deploy them.
+
+**Time Bonus: The Long Road**
+- **Bonus**: Scales up to +24%.
+- **Requirement**: Time elapsed.
+- **Effect**: Efficiency increases hourly. To reach the maximum 24% bonus, the expedition must run for a full 24 hours.

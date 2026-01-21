@@ -1,0 +1,32 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "name": "TwT Bot",
+  "theme": "mint",
+  "colors": {
+    "primary": "#38bdf8",
+    "light": "#7dd3fc",
+    "dark": "#0ea5e9"
+  },
+  "navigation": [
+    {
+      "group": "Getting Started",
+      "pages": ["introduction", "the-ranking-system"]
+    },
+    {
+      "group": "The Gacha",
+      "pages": ["pulling", "inventory-management"]
+    },
+    {
+      "group": "Economy & Growth",
+      "pages": ["expeditions", "daily-tasks"]
+    },
+    {
+      "group": "Combat",
+      "pages": ["battle-mechanics"]
+    },
+    {
+      "group": "Reference",
+      "pages": ["command-list"]
+    }
+  ]
+}
