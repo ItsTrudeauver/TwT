@@ -1,5 +1,5 @@
 {
-  "$schema": "https://mintlify.com/docs.json",
+  "$schema": "https://mintlify.com/schema.json",
   "name": "TwT Bot",
   "theme": "mint",
   "colors": {
@@ -10,23 +10,28 @@
   "navigation": [
     {
       "group": "Getting Started",
-      "pages": ["introduction", "the-ranking-system"]
+      "pages": [
+        "docs/introduction"
+      ]
     },
     {
       "group": "The Gacha",
-      "pages": ["pulling", "inventory-management"]
+      "pages": [
+        "docs/inventory-and-gacha"
+      ]
     },
     {
       "group": "Economy & Growth",
-      "pages": ["expeditions", "daily-tasks"]
-    },
-    {
-      "group": "Combat",
-      "pages": ["battle-mechanics"]
+      "pages": [
+        "docs/expeditions",
+        "docs/daily-activities"
+      ]
     },
     {
       "group": "Reference",
-      "pages": ["command-list"]
+      "pages": [
+        "docs/commands"
+      ]
     }
   ]
 }
