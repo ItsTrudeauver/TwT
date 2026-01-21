@@ -6,7 +6,31 @@ import os
 from core.database import get_db_pool
 from core.game_math import calculate_effective_power
 from core.skills import SKILL_DATA
+class SkillPagination(discord.ui.View):
+    def __init__(self, pages):
+        super().__init__(timeout=60)  # Buttons disable after 60 seconds
+        self.pages = pages
+        self.current_page = 0
 
+    async def update_view(self, interaction: discord.Interaction):
+        await interaction.response.edit_message(embed=self.pages[self.current_page], view=self)
+
+    @discord.ui.button(label="Previous", style=discord.ButtonStyle.gray)
+    async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.current_page > 0:
+            self.current_page -= 1
+            await self.update_view(interaction)
+        else:
+            await interaction.response.send_message("You are on the first page.", ephemeral=True)
+
+    @discord.ui.button(label="Next", style=discord.ButtonStyle.gray)
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.current_page < len(self.pages) - 1:
+            self.current_page += 1
+            await self.update_view(interaction)
+        else:
+            await interaction.response.send_message("You are on the last page.", ephemeral=True)
+            
 class Utility(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -14,36 +38,44 @@ class Utility(commands.Cog):
     
     @commands.command(name="skills", aliases=["sl"])
     async def list_skills(self, ctx):
-        """
-        Displays all available skills and their effects.
-        Usage: !skills or !sl
-        """
-        embed = discord.Embed(
-            title="✨ Character Skills", 
-            description="List of all possible abilities and their battle/expedition effects.",
-            color=0xF1C40F
-        )
+        """Displays all available skills using a paginated menu."""
+        
+        # Split skills into chunks of 5 per page
+        skill_items = list(SKILL_DATA.items())
+        chunks = [skill_items[i:i + 5] for i in range(0, len(skill_items), 5)]
+        pages = []
 
-        # Iterate through the dictionary imported from core/skills.py
-        for skill_name, data in SKILL_DATA.items():
-            # Create a clean string for attributes
-            context = "Battle" if data['applies_in'] == "b" else "Expedition"
-            if data['applies_in'] == "g": context = "Global"
-            
-            tags = []
-            if data['stackable']: tags.append("Stackable")
-            if data['overlap']: tags.append("Overlap OK")
-            
-            attr_text = f"**[{context}]** " + (" | ".join(tags) if tags else "Unique")
-            
-            embed.add_field(
-                name=f"**{skill_name}**",
-                value=f"{data['description']}\n*{attr_text}*",
-                inline=False
+        for idx, chunk in enumerate(chunks):
+            embed = discord.Embed(
+                title="✨ Character Skills",
+                description="List of battle/expedition abilities.",
+                color=0xF1C40F
             )
+            
+            for skill_name, data in chunk:
+                # Formatting context labels
+                context = "Battle" if data['applies_in'] == "b" else "Expedition"
+                if data['applies_in'] == "g": context = "Global"
+                
+                tags = []
+                if data['stackable']: tags.append("Stackable")
+                if data['overlap']: tags.append("Overlap OK")
+                attr_text = f"**[{context}]** " + (" | ".join(tags) if tags else "Unique")
+                
+                embed.add_field(
+                    name=f"**{skill_name}**",
+                    value=f"{data['description']}\n*{attr_text}*",
+                    inline=False
+                )
+            
+            embed.set_footer(text=f"Page {idx + 1} of {len(chunks)}")
+            pages.append(embed)
 
-        embed.set_footer(text="Skills are randomly assigned or granted via admin commands.")
-        await ctx.send(embed=embed)
+        if not pages:
+            return await ctx.send("No skills found.")
+
+        view = SkillPagination(pages)
+        await ctx.send(embed=pages[0], view=view)
 
     @commands.command(name="lookup")
     async def lookup(self, ctx, *, name: str):
