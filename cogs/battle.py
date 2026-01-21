@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 import random
 import asyncio
+import typing
 from core.database import get_db_pool, get_user
 from core.game_math import simulate_standoff, calculate_effective_power
 from core.skill_handlers import SkillHandler
@@ -14,7 +15,8 @@ class Battle(commands.Cog):
         """Fetches a user's battle team with full stats and ability tags."""
         pool = await get_db_pool()
         async with pool.acquire() as conn:
-            # Fetch the inventory IDs from the teams table
+            # Check if teams table exists and fetch
+            # Note: Ensure you have created the 'teams' table in your database!
             team_row = await conn.fetchrow("SELECT slot_1, slot_2, slot_3, slot_4, slot_5 FROM teams WHERE user_id = $1", str(user_id))
             if not team_row: return []
 
@@ -48,20 +50,19 @@ class Battle(commands.Cog):
         for rarity, min_rank, max_rank in setup:
             rank = random.randint(min_rank, max_rank)
             # Use a dummy fav count based on rank to estimate power
-            # (Rank 1 is ~550k, Rank 10k is ~100)
             mock_favs = int(600000 / (rank**0.5)) 
             power = calculate_effective_power(mock_favs, rarity, rank)
             
             team.append({
                 'name': f"NPC {rarity}",
                 'true_power': power,
-                'ability_tags': [], # NPCs generally don't have skills unless specified
+                'ability_tags': [], 
                 'rarity': rarity
             })
         return team
 
     @commands.command(name="battle")
-    async def battle(self, ctx, opponent: discord.Member = None, difficulty: str = None):
+    async def battle(self, ctx, target: typing.Union[discord.Member, str] = None):
         """
         Usage: !battle @user (PVP) or !battle easy/hell (PVE)
         """
@@ -69,24 +70,36 @@ class Battle(commands.Cog):
         attacker_team = await self.get_team_for_battle(user_id)
         
         if not attacker_team:
-            return await ctx.send("❌ Your battle team is empty! Use `!set_team` first.")
+            return await ctx.send("❌ Your battle team is empty! Use `!set_team` (if you have it) or check your RPG setup.")
+
+        # --- LOGIC FIX: Handle Union Argument ---
+        opponent = None
+        difficulty = None
+        mode = None
+
+        if isinstance(target, discord.Member):
+            opponent = target
+            mode = "pvp"
+        elif isinstance(target, str):
+            difficulty = target
+            mode = difficulty.lower()
+        else:
+            return await ctx.send("❓ Who are you fighting? Use `!battle @user` or `!battle easy`.")
 
         # 1. Resolve Defender
         defender_name = ""
-        if opponent:
+        defender_team = []
+
+        if mode == "pvp":
             defender_team = await self.get_team_for_battle(str(opponent.id))
             if not defender_team:
                 return await ctx.send(f"❌ {opponent.display_name} has no battle team set.")
             defender_name = opponent.display_name
-            mode = "pvp"
-        elif difficulty:
+        else:
             defender_team = self.generate_npc_team(difficulty)
             if not defender_team:
                 return await ctx.send("❌ Invalid difficulty. Choose: easy, normal, hard, expert, nightmare, hell.")
             defender_name = f"{difficulty.capitalize()} NPC"
-            mode = difficulty.lower()
-        else:
-            return await ctx.send("❓ Who are you fighting? Use `!battle @user` or `!battle easy`.")
 
         msg = await ctx.send(f"⚔️ **BATTLE START:** {ctx.author.display_name} vs {defender_name}...")
         await asyncio.sleep(1)
@@ -95,7 +108,7 @@ class Battle(commands.Cog):
         atk_active = SkillHandler.get_active_skills(attacker_team, context='b')
         def_active = SkillHandler.get_active_skills(defender_team, context='b')
 
-        # 3. Skill Phase: Kamikaze (Removes units before power sum)
+        # 3. Skill Phase: Kamikaze
         atk_ignore = SkillHandler.handle_kamikaze(defender_team, atk_active)
         def_ignore = SkillHandler.handle_kamikaze(attacker_team, def_active)
 
@@ -117,7 +130,6 @@ class Battle(commands.Cog):
         def_final_power = SkillHandler.apply_team_battle_mods(def_power, atk_active)
 
         # 6. Simulate Standoff
-        # Note: simulate_standoff in game_math returns (WinnerLabel, Chance)
         winner_label, chance = simulate_standoff(atk_final_power, def_final_power)
         won = (winner_label == "Player A")
 
@@ -126,11 +138,14 @@ class Battle(commands.Cog):
 
         # 8. Database Update (Tasks)
         pool = await get_db_pool()
-        task_key = "pvp" if mode == "pvp" else mode
+        # Ensure task_key fits your database schema for tasks
+        task_key = "pvp" if mode == "pvp" else mode 
+        
+        # Safe insert/update
         await pool.execute("""
             INSERT INTO daily_tasks (user_id, task_key, progress)
             VALUES ($1, $2, 1)
-            ON CONFLICT (user_id, task_key) DO UPDATE SET progress = 1
+            ON CONFLICT (user_id, task_key) DO UPDATE SET progress = daily_tasks.progress + 1
         """, user_id, task_key)
 
         # 9. Result Embed

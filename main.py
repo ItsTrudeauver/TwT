@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 TOKEN = os.getenv('DISCORD_TOKEN')
-PREFIX = os.getenv('COMMAND_PREFIX', 'g!')
+PREFIX = os.getenv('COMMAND_PREFIX', '!')
 from core.database import init_db  # Import your new Supabase init function
 from aiohttp import web
 

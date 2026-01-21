@@ -1,103 +1,162 @@
 import discord
 from discord.ext import commands
-from core.database import get_inventory_details, mass_scrap_r_rarity
-
-class InventoryPagination(discord.ui.View):
-    def __init__(self, pages, user):
-        super().__init__(timeout=60)
-        self.pages = pages
-        self.user = user
-        self.index = 0
-
-    async def interaction_check(self, interaction: discord.Interaction):
-        if interaction.user != self.user:
-            await interaction.response.send_message("This isn't your inventory menu!", ephemeral=True)
-            return False
-        return True
-
-    async def update_page(self, interaction: discord.Interaction):
-        embed = self.pages[self.index]
-        await interaction.response.edit_message(embed=embed, view=self)
-
-    @discord.ui.button(label="◀", style=discord.ButtonStyle.gray)
-    async def prev_page(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.index > 0:
-            self.index -= 1
-            await self.update_page(interaction)
-        else:
-            await interaction.response.send_message("You are already on the first page.", ephemeral=True)
-
-    @discord.ui.button(label="▶", style=discord.ButtonStyle.gray)
-    async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.index < len(self.pages) - 1:
-            self.index += 1
-            await self.update_page(interaction)
-        else:
-            await interaction.response.send_message("You are already on the last page.", ephemeral=True)
+import math
+from core.database import get_db_pool, get_user
 
 class Inventory(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
+    @commands.command(name="balance", aliases=["bal", "gems", "wallet", "profile"])
+    async def check_balance(self, ctx):
+        """
+        Shows your current Gems, Scrap, and Collection stats.
+        """
+        # 1. Fetch User Data (Gems/Scrap)
+        user_data = await get_user(ctx.author.id)
+        
+        # 2. Fetch Collection Stats (Count of unique chars, etc)
+        pool = await get_db_pool()
+        stats = await pool.fetchrow("""
+            SELECT COUNT(*) as total_chars, 
+                   COUNT(DISTINCT anilist_id) as unique_chars,
+                   SUM(c.true_power) as total_power
+            FROM inventory i
+            JOIN characters_cache c ON i.anilist_id = c.anilist_id
+            WHERE i.user_id = $1
+        """, str(ctx.author.id))
+
+        total_chars = stats['total_chars'] or 0
+        unique_chars = stats['unique_chars'] or 0
+        total_power = stats['total_power'] or 0
+
+        # 3. Build Embed
+        embed = discord.Embed(
+            title=f"💳 {ctx.author.display_name}'s Profile",
+            color=0x2ECC71
+        )
+        embed.set_thumbnail(url=ctx.author.display_avatar.url)
+
+        # Currency Field
+        embed.add_field(
+            name="💰 Currency",
+            value=f"**Gems:** `{user_data['gacha_gems']:,}` 💎\n**Scrap:** `{user_data['scrap']:,}` 🔩",
+            inline=True
+        )
+
+        # Collection Field
+        embed.add_field(
+            name="📦 Collection",
+            value=f"**Units:** `{total_chars}` (Unique: `{unique_chars}`)\n**Total Power:** `{total_power:,}` ⚔️",
+            inline=True
+        )
+
+        await ctx.send(embed=embed)
+
     @commands.command(name="inventory", aliases=["inv"])
-    async def inventory(self, ctx, sort: str = "date"):
-        """Usage: !inv [date | power | dupes]"""
-        valid_sorts = ["date", "power", "dupes"]
-        sort_choice = sort.lower()
+    async def show_inventory(self, ctx, page: int = 1):
+        """
+        Displays your characters.
+        Usage: !inventory [page]
+        """
+        user_id = str(ctx.author.id)
+        pool = await get_db_pool()
         
-        if sort_choice not in valid_sorts:
-            await ctx.send(f"❌ Invalid sort. Use: `{', '.join(valid_sorts)}`")
-            return
+        # Count total items for pagination
+        count_val = await pool.fetchval("SELECT COUNT(*) FROM inventory WHERE user_id = $1", user_id)
+        if not count_val:
+            return await ctx.send("Your inventory is empty! Use `!pull` or `!starter` to get characters.")
 
-        data = await get_inventory_details(ctx.author.id, sort_choice)
+        per_page = 10
+        max_pages = math.ceil(count_val / per_page)
         
-        if not data:
-            await ctx.send("Your inventory is empty. Start pulling characters with `!pull`!")
-            return
+        if page < 1 or page > max_pages:
+            return await ctx.send(f"❌ Invalid page. You have {max_pages} pages.")
 
-        items_per_page = 10
-        chunks = [data[i:i + items_per_page] for i in range(0, len(data), items_per_page)]
-        pages = []
+        offset = (page - 1) * per_page
         
-        for idx, chunk in enumerate(chunks):
-            embed = discord.Embed(
-                title=f"🎒 {ctx.author.name}'s Collection",
-                description=f"Sorting by: **{sort_choice.upper()}**",
-                color=0x3498db
-            )
-            
-            embed.set_thumbnail(url=ctx.author.display_avatar.url)
-            
-            lines = []
-            for c in chunk:
-                name = c['name'] or f"Unknown ID:{c['anilist_id']}"
-                rarity = c['rarity'] or "R"
-                char_id = c['id']
-                base_power = c['true_power'] or 0
-                dupes = c['dupe_count']
-                
-                # Calculate 5% permanent stat boost per duplicate
-                boost = 1 + (max(0, dupes - 1) * 0.05)
-                final_power = int(base_power * boost)
-                
-                lines.append(f"**{name}** [{rarity}]")
-                lines.append(f"└ ID: `{char_id}` | ⚔️: `{final_power:,}` | Dupes: `{dupes}`")
-            
-            embed.description += "\n\n" + "\n".join(lines)
-            embed.set_footer(text=f"Page {idx+1}/{len(chunks)} • Total Characters: {len(data)}")
-            pages.append(embed)
+        # Fetch inventory with character details
+        rows = await pool.fetch("""
+            SELECT i.id, c.name, c.rarity, c.true_power, i.is_locked
+            FROM inventory i
+            JOIN characters_cache c ON i.anilist_id = c.anilist_id
+            WHERE i.user_id = $1
+            ORDER BY c.true_power DESC
+            LIMIT $2 OFFSET $3
+        """, user_id, per_page, offset)
 
-        view = InventoryPagination(pages, ctx.author)
-        await ctx.send(embed=pages[0], view=view)
+        embed = discord.Embed(title=f"🎒 Inventory (Page {page}/{max_pages})", color=0x3498DB)
+        
+        desc_lines = []
+        for row in rows:
+            lock_icon = "🔒 " if row['is_locked'] else ""
+            rarity_icon = "🌟" if row['rarity'] == "SSR" else "✨" if row['rarity'] == "SR" else "⚪"
+            
+            line = f"`#{row['id']}` {lock_icon}**{row['name']}** {rarity_icon}\nChecking Power: `{row['true_power']:,}`"
+            desc_lines.append(line)
+        
+        embed.description = "\n".join(desc_lines)
+        embed.set_footer(text=f"Total Units: {count_val} | Use !view [ID] for details")
+        
+        await ctx.send(embed=embed)
 
-    @commands.command(name="scrap_all", aliases=["mass_scrap","scall"])
-    async def scrap_all(self, ctx):
-        """Scraps all unlocked 'R' characters for 200 Gems each."""
-        count, reward = await mass_scrap_r_rarity(ctx.author.id)
-        if count > 0:
-            await ctx.send(f"♻️ Scrapped **{count}** characters for **{reward:,}** Gems!")
+    @commands.command(name="view")
+    async def view_character(self, ctx, inventory_id: int):
+        """
+        View detailed stats of a specific character in your inventory.
+        Usage: !view [Inventory ID] (The number with # in !inv)
+        """
+        pool = await get_db_pool()
+        
+        row = await pool.fetchrow("""
+            SELECT i.id, c.name, c.image_url, c.rarity, c.true_power, c.ability_tags, i.is_locked, c.anilist_id
+            FROM inventory i
+            JOIN characters_cache c ON i.anilist_id = c.anilist_id
+            WHERE i.id = $1 AND i.user_id = $2
+        """, inventory_id, str(ctx.author.id))
+
+        if not row:
+            return await ctx.send("❌ Character not found in your inventory.")
+
+        embed = discord.Embed(title=f"{row['name']}", color=0xF1C40F if row['rarity'] == "SSR" else 0x9B59B6)
+        embed.set_image(url=row['image_url'])
+        
+        status = "🔒 Locked" if row['is_locked'] else "🔓 Unlocked"
+        
+        embed.add_field(name="DETAILS", value=f"**Rarity:** {row['rarity']}\n**Power:** {row['true_power']:,}\n**Status:** {status}", inline=True)
+        embed.add_field(name="META", value=f"**Inv ID:** `{row['id']}`\n**AniList ID:** `{row['anilist_id']}`", inline=True)
+        
+        # Parse Skills
+        import json
+        skills = json.loads(row['ability_tags'])
+        if skills:
+            embed.add_field(name="SKILLS", value="\n".join([f"• {s}" for s in skills]), inline=False)
         else:
-            await ctx.send("❌ No unlocked 'R' characters found to scrap.")
+            embed.add_field(name="SKILLS", value="*None*", inline=False)
+
+        await ctx.send(embed=embed)
+
+    @commands.command(name="lock")
+    async def lock_character(self, ctx, inventory_id: int):
+        """Locks a character to prevent accidental scrapping."""
+        pool = await get_db_pool()
+        res = await pool.execute("UPDATE inventory SET is_locked = TRUE WHERE id = $1 AND user_id = $2", inventory_id, str(ctx.author.id))
+        
+        if res == "UPDATE 1":
+            await ctx.send(f"🔒 Character `#{inventory_id}` has been **LOCKED**.")
+        else:
+            await ctx.send(f"❌ Could not find character `#{inventory_id}`.")
+
+    @commands.command(name="unlock")
+    async def unlock_character(self, ctx, inventory_id: int):
+        """Unlocks a character."""
+        pool = await get_db_pool()
+        res = await pool.execute("UPDATE inventory SET is_locked = FALSE WHERE id = $1 AND user_id = $2", inventory_id, str(ctx.author.id))
+        
+        if res == "UPDATE 1":
+            await ctx.send(f"🔓 Character `#{inventory_id}` has been **UNLOCKED**.")
+        else:
+            await ctx.send(f"❌ Could not find character `#{inventory_id}`.")
 
 async def setup(bot):
     await bot.add_cog(Inventory(bot))
