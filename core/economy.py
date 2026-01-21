@@ -7,9 +7,10 @@ from core.database import get_db_pool
 
 # --- CONSTANTS ---
 GEMS_PER_PULL = 1000  # 1 Multi = 10,000 Gems
-BOAT_COST_PER_PULL = 10_000_000  # 10 Million
+BOAT_COST_PER_PULL = 100_000_000 # 10 Million
 MAX_BOAT_PULLS_DAILY = 10
 UNBELIEVABOAT_TOKEN = os.getenv("UNBELIEVABOAT_TOKEN")
+ECONOMY_GUILD_ID = int(os.getenv("ECONOMY_GUILD_ID", 0))
 
 class Economy:
     @staticmethod
