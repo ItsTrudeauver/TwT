@@ -35,16 +35,25 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS users (
                 user_id TEXT PRIMARY KEY,
                 gacha_gems INTEGER DEFAULT 0,
-                boat_credits_spent INTEGER DEFAULT 0,
+                boat_credits_spent BIGINT DEFAULT 0,
                 pity_counter INTEGER DEFAULT 0,
                 luck_boost_stacks INTEGER DEFAULT 0,
-                last_daily_exchange TIMESTAMP,
-                last_expedition_claim TIMESTAMP,
+                last_daily_exchange TIMESTAMP WITH TIME ZONE,
+                last_expedition_claim TIMESTAMP WITH TIME ZONE,
                 daily_boat_pulls INTEGER DEFAULT 0,
-                last_boat_pull_at TIMESTAMP DEFAULT '1970-01-01',
+                last_boat_pull_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 has_claimed_starter BOOLEAN DEFAULT FALSE
             )
         """)
+
+        # --- MIGRATION GUARDS ---
+        # These ensure existing databases get the new columns without crashing
+        await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_boat_pulls INTEGER DEFAULT 0;")
+        await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_boat_pull_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;")
+        await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS boat_credits_spent BIGINT DEFAULT 0;")
+        
+        # Ensure column type is BIGINT even if it was created as INTEGER previously
+        await conn.execute("ALTER TABLE users ALTER COLUMN boat_credits_spent TYPE BIGINT;")
 
         # INVENTORY: Unique ID for every unit owned
         await conn.execute("""
