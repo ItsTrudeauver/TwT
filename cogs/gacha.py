@@ -4,6 +4,7 @@ import aiohttp
 import random
 import os
 import asyncio
+import json
 import time
 
 from core.database import get_user, batch_add_to_inventory, batch_cache_characters, get_db_pool
@@ -15,63 +16,79 @@ class Gacha(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.anilist_url = os.getenv("ANILIST_URL", "https://graphql.anilist.co")
+        self.rank_map = {}
+        self.load_rankings()
+
+    def load_rankings(self):
+        """Loads the scraped ID -> Rank map from JSON."""
+        try:
+            with open("data/rankings.json", "r") as f:
+                self.rank_map = json.load(f)
+            print(f"✅ [Gacha] Loaded {len(self.rank_map)} characters from rankings.json")
+        except FileNotFoundError:
+            print("⚠️ [Gacha] 'data/rankings.json' not found. Please run scripts/update_ranks.py")
+
+    def get_cached_rank(self, anilist_id):
+        """
+        Returns the exact rank from the JSON file.
+        If the character isn't in the top 10,000, we treat them as Rank 10,001.
+        """
+        return self.rank_map.get(str(anilist_id), 10001)
+
+    def determine_rarity(self, rank):
+        if rank <= 250: return "SSR"
+        if rank <= 1500: return "SR"
+        return "R"
 
     def get_rarity_and_page(self, guaranteed_ssr=False):
-        if guaranteed_ssr:
-            return "SSR", random.randint(1, 250)
+        """
+        Determines which 'Page' (Rank) to pull from.
+        """
+        if guaranteed_ssr: return "SSR", random.randint(1, 250)
         
         roll = random.random() * 100
         if roll < 3:  return "SSR", random.randint(1, 250)
         if roll < 15: return "SR", random.randint(251, 1500)
+        # Pulls from the remainder of your 10k database
         return "R", random.randint(1501, 10000)
 
     async def get_active_banner(self):
         pool = await get_db_pool()
         current_time = int(time.time())
+        banner = await pool.fetchrow("SELECT * FROM banners WHERE is_active = TRUE AND end_timestamp > $1 LIMIT 1", current_time)
         
-        banner = await pool.fetchrow("""
-            SELECT * FROM banners 
-            WHERE is_active = TRUE AND end_timestamp > $1 
-            LIMIT 1
-        """, current_time)
-        
+        # Auto-close expired banners
         if not banner:
             await pool.execute("UPDATE banners SET is_active = FALSE WHERE is_active = TRUE AND end_timestamp <= $1", current_time)
+            
         return banner
 
     async def fetch_banner_pull(self, session, banner):
         """
-        Modified pull logic that checks the DB to find which Banner IDs match the rolled rarity.
+        If a user rolls SSR/SR, check if they get a banner unit.
         """
         rarity, page = self.get_rarity_and_page()
         
-        # Check if we hit the Rate-Up chance
         if rarity in ["SSR", "SR"] and random.random() < banner['rate_up_chance']:
             pool = await get_db_pool()
-            
-            # Find which IDs in the banner match the rolled rarity
-            # We must query the cache because 'rate_up_ids' in banners table is just a list of ints.
+            # Find banner IDs that match the rolled rarity
             possible_hits = await pool.fetch("""
                 SELECT anilist_id FROM characters_cache 
                 WHERE anilist_id = ANY($1) AND rarity = $2
             """, banner['rate_up_ids'], rarity)
             
             if possible_hits:
-                # Pick one valid ID for this rarity
-                target_row = random.choice(possible_hits)
-                target_id = target_row['anilist_id']
-                
-                # Fetch it (using the known rarity to avoid re-calculation)
-                return await self.fetch_character_by_id(session, target_id, forced_rarity=rarity)
+                target_id = random.choice(possible_hits)['anilist_id']
+                # Fetch specific ID using our JSON lookup
+                return await self.fetch_character_by_id(session, target_id)
 
-        # Fallback: Normal random pull
+        # Fallback to random pull
         return await self.fetch_character_by_rank(session, rarity, page)
 
     async def fetch_character_by_id(self, session, anilist_id: int, forced_rarity=None):
         """
-        Fetches basic character data.
-        If forced_rarity is provided (from !set_banner), we skip calculations.
-        If not, we estimate based on favorites.
+        Fetches character metadata (Name/Image) from API, 
+        but gets Rank/Rarity/Power directly from JSON.
         """
         query = """
         query ($id: Int) {
@@ -87,32 +104,26 @@ class Gacha(commands.Cog):
             async with session.post(self.anilist_url, json={'query': query, 'variables': {'id': anilist_id}}) as resp:
                 if resp.status != 200: return None
                 data = await resp.json()
-                
-                if not data.get('data') or not data['data'].get('Character'):
-                    print(f"⚠️ ID {anilist_id} returned NULL.")
-                    return None
+                if not data.get('data') or not data['data'].get('Character'): return None
 
                 char_data = data['data']['Character']
-                favs = char_data['favourites']
-
+                
+                # --- BACKWARDS LOOKUP ---
                 if forced_rarity:
-                    # TRUST THE USER / BANNER SETTINGS
                     rarity = forced_rarity
-                    # Rank is irrelevant for banner units, but we need a number for math
-                    rank = 1 if rarity == "SSR" else 500 if rarity == "SR" else 2000
+                    rank = 1 if rarity == "SSR" else 500
                 else:
-                    # Fallback estimation
-                    if favs >= 15000: rarity, rank = "SSR", 100
-                    elif favs >= 2000: rarity, rank = "SR", 1000
-                    else: rarity, rank = "R", 5000
-
-                true_p = calculate_effective_power(favs, rarity, rank)
+                    # Look up the ID in our JSON map
+                    rank = self.get_cached_rank(anilist_id)
+                    rarity = self.determine_rarity(rank)
+                
+                true_p = calculate_effective_power(char_data['favourites'], rarity, rank)
                 
                 return {
                     'id': char_data['id'],
                     'name': char_data['name']['full'],
                     'image_url': char_data['image']['large'],
-                    'favs': favs,
+                    'favs': char_data['favourites'],
                     'rarity': rarity,
                     'page': rank,
                     'true_power': true_p
@@ -122,6 +133,10 @@ class Gacha(commands.Cog):
             return None
 
     async def fetch_character_by_rank(self, session, rarity, page):
+        """
+        Fetches a character by their Rank (Page) from AniList.
+        Double-checks the rank against our JSON to be consistent.
+        """
         query = """
         query ($page: Int) {
             Page(page: $page, perPage: 1) {
@@ -141,7 +156,10 @@ class Gacha(commands.Cog):
                     chars = data.get('data', {}).get('Page', {}).get('characters', [])
                     if chars:
                         char = chars[0]
+                        # Verify rank in our local JSON just in case (optional consistency)
+                        # real_rank = self.get_cached_rank(char['id'])
                         true_p = calculate_effective_power(char['favourites'], rarity, page)
+                        
                         return {
                             'id': char['id'],
                             'name': char['name']['full'],
@@ -157,7 +175,6 @@ class Gacha(commands.Cog):
     @commands.command(name="pull")
     async def pull_character(self, ctx, amount: int = 1):
         if amount not in [1, 10]: return await ctx.send("❌ Only 1 or 10 pulls allowed.")
-        
         user_data = await get_user(ctx.author.id)
         cost = amount * GEMS_PER_PULL
         is_free = await Economy.is_free_pull(ctx.author, self.bot)
@@ -166,7 +183,6 @@ class Gacha(commands.Cog):
             return await ctx.send(f"❌ Need **{cost:,} Gems**. Balance: **{user_data['gacha_gems']:,}**")
 
         loading = await ctx.send(f"🎰 *Pulling {amount}x...*")
-        
         try:
             banner = await self.get_active_banner()
             if not is_free:
@@ -176,8 +192,7 @@ class Gacha(commands.Cog):
             async with aiohttp.ClientSession() as session:
                 tasks = []
                 for _ in range(amount):
-                    if banner:
-                        tasks.append(self.fetch_banner_pull(session, banner))
+                    if banner: tasks.append(self.fetch_banner_pull(session, banner))
                     else:
                         r, p = self.get_rarity_and_page()
                         tasks.append(self.fetch_character_by_rank(session, r, p))
@@ -211,9 +226,11 @@ class Gacha(commands.Cog):
         loading = await ctx.send("🎁 *Opening Starter Pack...*")
         try:
             async with aiohttp.ClientSession() as session:
+                # 1 Guaranteed SSR + 9 Random
                 tasks = [self.fetch_character_by_rank(session, *self.get_rarity_and_page(guaranteed_ssr=True))]
                 for _ in range(9):
                     tasks.append(self.fetch_character_by_rank(session, *self.get_rarity_and_page()))
+                
                 chars = [c for c in await asyncio.gather(*tasks) if c]
 
             if len(chars) < 10: return await loading.edit(content="❌ Sync Error.")
