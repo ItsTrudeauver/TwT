@@ -81,5 +81,6 @@ class Help(commands.Cog):
         await ctx.send(embed=embed)
 
 async def setup(bot):
-    await bot.remove_command("help") # Removes default discord.py help
+    # FIXED: removed 'await' from this line
+    bot.remove_command("help") 
     await bot.add_cog(Help(bot))
