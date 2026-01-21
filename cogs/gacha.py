@@ -192,49 +192,51 @@ class Gacha(commands.Cog):
         """Displays information and the graphic for the active rate-up banner."""
         pool = await get_db_pool()
         async with pool.acquire() as conn:
-            # 1. Fetch active banner from the existing 'banners' table
+            # 1. Fetch active banner from the 'banners' table
             banner = await conn.fetchrow("""
-                SELECT name, rate_up_ids, end_date 
+                SELECT name, rate_up_ids, end_timestamp 
                 FROM banners 
-                WHERE is_active = TRUE 
-                ORDER BY start_date DESC LIMIT 1
+                WHERE is_active = true 
+                ORDER BY id DESC LIMIT 1
             """)
             
             if not banner:
                 return await ctx.send("ℹ️ No active banner found.")
 
-            # 2. Parse IDs and fetch character details for content and graphic
-            raw_ids = banner['rate_up_ids']
-            ids = json.loads(raw_ids) if isinstance(raw_ids, str) else raw_ids
+            # 2. Extract IDs and fetch character details from cache
+            # Handling array format from PostgreSQL (strings in the SQL provided)
+            raw_ids = [int(i) for i in banner['rate_up_ids']]
             
             chars = await conn.fetch("""
                 SELECT anilist_id, name, rarity, image_url, true_power, ability_tags 
                 FROM characters_cache 
                 WHERE anilist_id = ANY($1)
-            """, ids)
+            """, raw_ids)
 
         if not chars:
-            return await ctx.send("❌ Banner exists but featured unit data is missing from cache.")
+            return await ctx.send("❌ Banner unit data is missing from cache.")
 
-        # 3. Use the EXISTING generate_banner_image function from core/image_gen.py
+        # 3. Generate banner image using the existing image_gen function
+        from core.image_gen import generate_banner_image
         async with aiohttp.ClientSession() as session:
-            from core.image_gen import generate_banner_image
+            # Prepare character dicts for the image generator
             char_list = [dict(c) for c in chars]
             img_bytes = await generate_banner_image(session, char_list, banner['name'])
 
-        # 4. Format message content and Unix timestamp
-        end_ts = int(banner['end_date'].timestamp())
+        # 4. Construct message content
         bulleted_list = "\n".join([f"• **{c['name']}**" for c in chars])
+        end_time = int(banner['end_timestamp'])
         
-        embed = discord.Embed(title=banner['name'], color=0xFFAA00)
-        embed.description = (
+        description = (
             f"### Rate Up Units:\n{bulleted_list}\n\n"
-            f"**Ends in:** <t:{end_ts}:R>\n\n"
+            f"**Ends in:** <t:{end_time}:R>\n\n"
             "*During the banner, featured units have a 50% chance of appearing whenever a unit of their rarity is rolled.*"
         )
-        
+
+        embed = discord.Embed(title=f"✨ {banner['name']} ✨", color=0xFFAA00, description=description)
         file = discord.File(fp=img_bytes, filename="banner.png")
         embed.set_image(url="attachment://banner.png")
+
         await ctx.send(file=file, embed=embed)
         
     @commands.command(name="pull")
