@@ -35,6 +35,56 @@ class Utility(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.anilist_url = os.getenv("ANILIST_URL", "https://graphql.anilist.co")
+        
+    @commands.command(name="whohas", aliases=["usersof", "skillsearch"])
+    async def who_has_skill(self, ctx, *, skill_name: str):
+        """
+        Finds all characters that possess a specific skill.
+        Usage: !whohas Lucky 7
+        """
+        # 1. Clean input (Title Case helps with matching if your DB is consistent)
+        # However, it's safer to rely on exact match or ILIKE. 
+        # Since ability_tags is JSONB, case sensitivity matters.
+        # We will try exact match first.
+        
+        target_skill = skill_name.strip()
+        
+        pool = await get_db_pool()
+        async with pool.acquire() as conn:
+            # PostgreSQL Operator '?' checks if a string exists in a JSONB array
+            rows = await conn.fetch("""
+                SELECT name, rarity, ability_tags 
+                FROM characters_cache 
+                WHERE ability_tags ? $1
+            """, target_skill)
+            
+            # If exact match fails, try a broader search (slower but helpful)
+            # This fetches ALL chars and checks in python (fallback for case-insensitivity)
+            if not rows:
+                all_chars = await conn.fetch("SELECT name, rarity, ability_tags FROM characters_cache")
+                rows = [
+                    row for row in all_chars 
+                    if any(s.lower() == target_skill.lower() for s in (row['ability_tags'] or []))
+                ]
+
+        if not rows:
+            return await ctx.reply(f"🤷 **No known characters** possess the skill `{target_skill}`.")
+
+        # 2. Format Output
+        msg = f"🔍 **Characters with '{target_skill}':**\n"
+        
+        # Limit list length to avoid Discord 2000 char limit
+        lines = []
+        for row in rows:
+            lines.append(f"• **{row['name']}** ({row['rarity']})")
+        
+        if len(lines) > 20:
+            msg += "\n".join(lines[:20])
+            msg += f"\n...and {len(lines)-20} more."
+        else:
+            msg += "\n".join(lines)
+
+        await ctx.reply(msg)
     
     @commands.command(name="skills", aliases=["sl"])
     async def list_skills(self, ctx):
