@@ -59,7 +59,7 @@ class Event(commands.Cog):
             f"🎫 **Tickets:** {data['tickets']}/{self.DAILY_TICKETS}\n"
             f"🏆 **Total Score:** {data['score']:,}"
         )
-        embed.add_field(name="Commands", value="`!casino fight` - Deal Damage (1 Ticket)\n`!casino rank` - View Leaderboard")
+        embed.add_field(name="Commands", value="`!fight` - Deal Damage (1 Ticket)\n`!rank` - View Leaderboard")
         embed.set_footer(text="Top 1 wins the Exclusive Unit!")
         
         await ctx.send(embed=embed)
