@@ -12,6 +12,68 @@ from core.image_gen import generate_banner_image
 class Admin(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+    
+    import discord
+from discord.ext import commands
+from core.database import get_db_pool
+
+class Admin(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+
+    @commands.command(name="give")
+    @commands.has_permissions(administrator=True)
+    async def give(self, ctx, category: str, user: discord.User, amount_or_id: int):
+        """
+        Admin command to give resources.
+        Usage:
+        !give gems @Player 5000
+        !give char @Player 77777
+        """
+        pool = await get_db_pool()
+        
+        # --- GIVE GEMS ---
+        if category.lower() in ["gems", "gem", "money"]:
+            async with pool.acquire() as conn:
+                # Ensure user exists in DB first
+                await conn.execute("INSERT INTO users (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING", str(user.id))
+                
+                # Add Gems
+                await conn.execute("UPDATE users SET gacha_gems = gacha_gems + $1 WHERE user_id = $2", amount_or_id, str(user.id))
+            
+            await ctx.reply(f"✅ **Admin Action:** Gave **{amount_or_id:,} Gems** to {user.mention}!")
+
+        # --- GIVE CHARACTER ---
+        elif category.lower() in ["char", "character", "unit"]:
+            char_id = amount_or_id
+            
+            async with pool.acquire() as conn:
+                # 1. Check if Character Exists in Cache (Optional but good for safety)
+                char_info = await conn.fetchrow("SELECT name FROM characters_cache WHERE anilist_id = $1", char_id)
+                char_name = char_info['name'] if char_info else f"ID {char_id}"
+
+                # 2. Check if user already owns it
+                existing = await conn.fetchrow(
+                    "SELECT id, dupe_level FROM inventory WHERE user_id = $1 AND anilist_id = $2", 
+                    str(user.id), char_id
+                )
+                
+                if existing:
+                    # Upgrade Dupe
+                    new_dupe = existing['dupe_level'] + 1
+                    await conn.execute("UPDATE inventory SET dupe_level = $1 WHERE id = $2", new_dupe, existing['id'])
+                    await ctx.reply(f"✅ **Admin Action:** {user.mention} already owned **{char_name}**. Upgraded to **Dupe Lv {new_dupe}**.")
+                else:
+                    # Add New
+                    await conn.execute(
+                        "INSERT INTO inventory (user_id, anilist_id, level, xp) VALUES ($1, $2, 1, 0)",
+                        str(user.id), char_id
+                    )
+                    await ctx.reply(f"✅ **Admin Action:** Successfully added **{char_name}** to {user.mention}'s inventory.")
+
+        else:
+            await ctx.reply("❌ Invalid category. Use `gems` or `char`.\nExample: `!give gems @User 100`")
+
 
     @commands.command(name="add_skill")
     @commands.is_owner()
