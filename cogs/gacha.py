@@ -47,8 +47,8 @@ class Gacha(commands.Cog):
         if guaranteed_ssr: return "SSR", random.randint(1, 250)
         
         roll = random.random() * 100
-        if roll < 3:  return "SSR", random.randint(1, 250)
-        if roll < 15: return "SR", random.randint(251, 1500)
+        if roll < 1:  return "SSR", random.randint(1, 250)
+        if roll < 10: return "SR", random.randint(251, 1500)
         # Pulls from the remainder of your 10k database
         return "R", random.randint(1501, 10000)
 
