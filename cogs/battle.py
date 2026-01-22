@@ -6,7 +6,7 @@ import typing
 from core.database import get_db_pool, get_user
 from core.game_math import simulate_standoff, calculate_effective_power
 from core.skill_handlers import SkillHandler
-from core.image_gen import generate_battle_image # <--- Import this
+from core.image_gen import generate_battle_image 
 
 class Battle(commands.Cog):
     def __init__(self, bot):
@@ -22,17 +22,15 @@ class Battle(commands.Cog):
             slot_ids = [v for v in team_row.values() if v is not None]
             if not slot_ids: return []
 
-            # UPDATED SQL: Added ::int cast to prevent returning Decimal type
-#
-            # UPDATED SQL: Joins 'users' table and applies multiplier
+            # Added ::int cast to prevent returning Decimal type
             chars = await conn.fetch("""
                 SELECT 
                     i.id, 
                     c.name, 
                     FLOOR(
                         c.true_power 
-                        * (1 + (COALESCE(i.dupe_level, 0) * 0.05))   -- Dupe Bonus (5%)
-                        * (1 + (COALESCE(u.team_level, 1) * 0.01))   -- Team Level Bonus (1%)
+                        * (1 + (COALESCE(i.dupe_level, 0) * 0.05))   -- Dupe Bonus
+                        * (1 + (COALESCE(u.team_level, 1) * 0.01))   -- Team Level Bonus
                     )::int as true_power, 
                     c.ability_tags, 
                     c.rarity, 
@@ -40,10 +38,9 @@ class Battle(commands.Cog):
                     c.image_url
                 FROM inventory i
                 JOIN characters_cache c ON i.anilist_id = c.anilist_id
-                JOIN users u ON i.user_id = u.user_id -- Connect to Users table
+                JOIN users u ON i.user_id = u.user_id 
                 WHERE i.id = ANY($1)
             """, slot_ids)
-            
             return [dict(c) for c in chars]
         
     def generate_npc_team(self, difficulty):
@@ -54,8 +51,7 @@ class Battle(commands.Cog):
             "hard":      [("SR", 251, 1500)] * 5,
             "expert":    [("SSR", 1, 250)] * 2 + [("SR", 251, 1500)] * 2 + [("R", 1501, 10000)] * 1,
             "nightmare": [("SSR", 1, 250)] * 3 + [("SR", 251, 1500)] * 2,
-            "hell":      [("SSR", 1, 10)] * 2 + [("SSR", 11, 250)] * 3,
-            "conqueror": [("SSR"), 1, 10] * 5
+            "hell":      [("SSR", 1, 50)] * 2 + [("SSR", 1, 250)] * 3
         }
         
         setup = rules.get(difficulty.lower())
@@ -71,7 +67,7 @@ class Battle(commands.Cog):
                 'true_power': power,
                 'ability_tags': [], 
                 'rarity': rarity,
-                'image_url': None # Generator handles this as a placeholder
+                'image_url': None 
             })
         return team
 
@@ -117,14 +113,23 @@ class Battle(commands.Cog):
         atk_ignore = SkillHandler.handle_kamikaze(defender_team, atk_active)
         def_ignore = SkillHandler.handle_kamikaze(attacker_team, def_active)
 
-        atk_power = sum(SkillHandler.apply_individual_battle_skills(c['true_power'], c) for i, c in enumerate(attacker_team) if i not in def_ignore)
-        def_power = sum(SkillHandler.apply_individual_battle_skills(c['true_power'], c) for i, c in enumerate(defender_team) if i not in atk_ignore)
+        # 1. Apply Individual Skills + Individual Variance (0.9 - 1.1)
+        # Variance is applied HERE so it averages out across 5 units
+        atk_power = sum(
+            (SkillHandler.apply_individual_battle_skills(c['true_power'], c) * random.uniform(0.9, 1.1))
+            for i, c in enumerate(attacker_team) if i not in def_ignore
+        )
+        
+        def_power = sum(
+            (SkillHandler.apply_individual_battle_skills(c['true_power'], c) * random.uniform(0.9, 1.1))
+            for i, c in enumerate(defender_team) if i not in atk_ignore
+        )
 
-        # 1. Apply team mods and then random variance (0.9 to 1.1) independently
-        atk_final = SkillHandler.apply_team_battle_mods(atk_power, def_active) * random.uniform(0.9, 1.1)
-        def_final = SkillHandler.apply_team_battle_mods(def_power, atk_active) * random.uniform(0.9, 1.1)
+        # 2. Apply Team-Wide Modifiers to the Sum
+        atk_final = SkillHandler.apply_team_battle_mods(atk_power, def_active)
+        def_final = SkillHandler.apply_team_battle_mods(def_power, atk_active)
 
-        # 2. Deterministic Winner: The higher final power number wins
+        # 3. Deterministic Winner
         if atk_final > def_final:
             winner_label = "Player A"
         elif def_final > atk_final:
@@ -132,13 +137,13 @@ class Battle(commands.Cog):
         else:
             winner_label = "Draw"
 
-        # 3. Handle skill-based revives or overrides
+        # 4. Handle skill-based revives or overrides
         final_result = SkillHandler.handle_revive(winner_label == "Player A", atk_active)
 
         # 0 = Draw, 1 = Player Wins, 2 = Player Loses
         win_code = 1 if final_result == "WIN" else (2 if final_result == "LOSS" else 0)
 
-        # Calculate 'chance' for the UI footer based on the final randomized values
+        # Calculate 'chance' for the UI footer
         total_final = atk_final + def_final
         chance = (atk_final / total_final * 100) if total_final > 0 else 50.0
 
@@ -152,7 +157,6 @@ class Battle(commands.Cog):
         """, user_id, task_key)
 
         # --- IMAGE GENERATION ---
-        # Pass COPY of teams to avoid modifying the original dicts during image gen logic
         img_bytes = await generate_battle_image(
             attacker_team, 
             defender_team, 
