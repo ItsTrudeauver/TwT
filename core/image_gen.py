@@ -71,44 +71,44 @@ def get_fitted_font(draw, text, max_width, font_path, max_font_size=40):
 def apply_holo_effect(img, rarity):
     if rarity == "R": return img
     
-    # Increase Saturation and Contrast for SSRs to make them "pop"
-    color_boost = 1.8 if rarity == "SSR" else 1.2
-    contrast_boost = 1.3 if rarity == "SSR" else 1.1
-    
-    img = ImageEnhance.Color(img).enhance(color_boost)
-    img = ImageEnhance.Contrast(img).enhance(contrast_boost)
-    
+    # Standard SR logic stays similar but slightly cleaner
+    if rarity == "SR":
+        img = ImageEnhance.Color(img).enhance(1.2)
+        overlay = Image.new("RGBA", img.size, THEMES["SR"]["rgb"] + (40,))
+        return Image.alpha_composite(img.convert("RGBA"), overlay)
+
+    # SSR "Rainbow" Logic
     if rarity == "SSR":
-        # Create a dynamic rainbow spectrum overlay
+        # 1. Boost colors significantly to prep for the holo look
+        img = ImageEnhance.Color(img).enhance(1.6)
+        img = ImageEnhance.Contrast(img).enhance(1.15)
+        img = img.convert("RGBA")
+
+        # 2. Create a diagonal rainbow gradient overlay
         rainbow = Image.new("RGBA", img.size)
         draw = ImageDraw.Draw(rainbow)
         
-        for x in range(img.width):
-            # Cycle through colors across the width of the card
-            hue = int((x / img.width) * 255)
-            # Simple RGB spectrum calculation
+        # Draw diagonal lines of varying hues
+        for i in range(img.width + img.height):
+            hue = int((i / (img.width + img.height)) * 255)
+            # Convert hue to a bright RGB (Simplified HSL to RGB)
             if hue < 85: r, g, b = 255, hue * 3, 0
             elif hue < 170: r, g, b = 255 - (hue - 85) * 3, 255, 0
             else: r, g, b = 0, 255, (hue - 170) * 3
             
-            # Draw a thin vertical line for each color step with low opacity
-            draw.line([(x, 0), (x, img.height)], fill=(r, g, b, 45))
-        
-        # Composite the rainbow overlay onto the character image
-        img = Image.alpha_composite(img.convert("RGBA"), rainbow)
-    else:
-        # Standard themed sheen for SRs
-        overlay_color = THEMES[rarity]["rgb"]
-        overlay = Image.new("RGBA", img.size, overlay_color + (30,))
-        img = Image.blend(img.convert("RGBA"), overlay, 0.15)
-        
-    return img.convert("RGBA")
+            # Low opacity (40) ensures the character is still visible
+            draw.line([(i, 0), (0, i)], fill=(r, g, b, 45), width=2)
+            
+        return Image.alpha_composite(img, rainbow)
+    
+    return img
 
 
 def create_character_card(char_data, card_size=(200, 300)):
     card = Image.new("RGBA", card_size, (20, 20, 20, 255))
     draw = ImageDraw.Draw(card)
-    theme = THEMES.get(char_data['rarity'], THEMES["R"])
+    rarity = char_data['rarity']
+    theme = THEMES.get(rarity, THEMES["R"])
 
     # Image
     img = char_data.get('image_obj')
@@ -120,7 +120,17 @@ def create_character_card(char_data, card_size=(200, 300)):
 
     # Text Box
     draw.rectangle([0, 250, 200, 300], fill="#151515")
-    draw.rectangle([0, 250, 200, 254], fill=theme["hex"])
+    
+    if rarity == "SSR":
+        # Draw a rainbow line instead of a gold one
+        for x in range(200):
+            hue = int((x / 200) * 255)
+            if hue < 85: color = (255, hue * 3, 0)
+            elif hue < 170: color = (255 - (hue - 85) * 3, 255, 0)
+            else: color = (0, 255, (hue - 170) * 3)
+            draw.line([(x, 250), (x, 254)], fill=color)
+    else:
+        draw.rectangle([0, 250, 200, 254], fill=theme["hex"])
 
     # --- NAME SCALING LOGIC ---
     name = char_data['name']
@@ -160,9 +170,31 @@ def create_character_card(char_data, card_size=(200, 300)):
               stroke_fill="white")
 
     # Border
-    border_width = 5 if char_data['rarity'] != "R" else 2
-    border_color = theme["hex"] if char_data['rarity'] != "R" else "#333333"
-    draw.rectangle([0, 0, 199, 299], outline=border_color, width=border_width)
+    border_width = 5 if rarity != "R" else 2
+    if rarity == "SSR":
+        # Draw the rim using 4 rainbow-gradient lines
+        for i in range(200): # Top and Bottom
+            hue = int((i / 200) * 255)
+            if hue < 85: color = (255, hue * 3, 0)
+            elif hue < 170: color = (255 - (hue - 85) * 3, 255, 0)
+            else: color = (0, 255, (hue - 170) * 3)
+            # Top Rim
+            draw.line([(i, 0), (i, border_width)], fill=color)
+            # Bottom Rim
+            draw.line([(i, 299), (i, 299 - border_width)], fill=color)
+        
+        for j in range(300): # Left and Right
+            hue = int((j / 300) * 255)
+            if hue < 85: color = (255, hue * 3, 0)
+            elif hue < 170: color = (255 - (hue - 85) * 3, 255, 0)
+            else: color = (0, 255, (hue - 170) * 3)
+            # Left Rim
+            draw.line([(0, j), (border_width, j)], fill=color)
+            # Right Rim
+            draw.line([(199, j), (199 - border_width, j)], fill=color)
+    else:
+        border_color = theme["hex"] if rarity != "R" else "#333333"
+        draw.rectangle([0, 0, 199, 299], outline=border_color, width=border_width)
 
     return card
 
