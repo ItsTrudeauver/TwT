@@ -52,6 +52,15 @@ async def init_db():
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_boat_pull_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;")
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS boat_credits_spent BIGINT DEFAULT 0;")
         
+        # NEW: Daily Shop Table
+        # Stores the date and a JSON list of {id, price, rarity}
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS daily_shop (
+                date TEXT PRIMARY KEY,
+                items JSONB
+            );
+        """)
+        
         # Ensure column type is BIGINT even if it was created as INTEGER previously
         await conn.execute("ALTER TABLE users ALTER COLUMN boat_credits_spent TYPE BIGINT;")
 
