@@ -33,6 +33,7 @@ class Battle(commands.Cog):
                     i.id, 
                     c.name, 
                     FLOOR(c.true_power * (1 + (COALESCE(i.dupe_level, 0) * 0.05)) * (1 + (COALESCE(u.team_level, 1) * 0.01)))::int as true_power, 
+                    i.dupe_level, -- FETCH THIS FIELD FOR THE IMAGE GEN
                     c.ability_tags, 
                     c.rarity, 
                     c.rank, 

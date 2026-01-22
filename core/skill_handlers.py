@@ -140,12 +140,13 @@ class SkillHandler:
         logs = []
 
         if "Lucky 7" in tags:
-            if random.random() < 0.07:
-                modified_power *= 8.77
-                logs.append(f"✨ **{char['name']}** hit the Lucky 7 Jackpot (+777% Power)!")
+            
             if random.random() < 0.77:
                 modified_power += 7777
                 logs.append(f"🍀 **{char['name']}** gained a Lucky 7 flat bonus (+7,777)!")
+            if random.random() < 0.07:
+                modified_power *= 8.77
+                logs.append(f"✨ **{char['name']}** hit the Lucky 7 Jackpot (+777% Power)!")
 
         if "Surge" in tags:
             mult = SKILL_DATA["Surge"]["value"]

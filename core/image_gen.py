@@ -7,13 +7,15 @@ import asyncio
 from datetime import datetime
 
 # --- ROBUST PATH SETUP ---
-# Gets the absolute path of the folder this script is in
 current_dir = pathlib.Path(__file__).parent.absolute()
 project_root = current_dir.parent
 
-# Builds absolute paths to assets
 FONT_PATH = project_root / "assets" / "fonts" / "bold_font.ttf"
 BG_PATH = project_root / "assets" / "templates" / "gacha_bg.jpg"
+
+# Star Colors
+STAR_YELLOW = (255, 215, 0)
+STAR_RED = (255, 69, 0)
 
 # Rarity Theme Colors
 THEMES = {
@@ -45,15 +47,11 @@ async def fetch_image(url):
 
 
 def get_fitted_font(draw, text, max_width, font_path, max_font_size=40):
-    """
-    Starts at Size 40 and shrinks until the text fits the box width.
-    """
     size = max_font_size
     while size > 10:
         try:
             font = ImageFont.truetype(str(font_path), size)
         except OSError:
-            # FONT FILE MISSING - RETURN DEFAULT AND PRINT ERROR
             print(f"❌ CRITICAL: Font file not found at {font_path}")
             return ImageFont.load_default()
 
@@ -63,7 +61,7 @@ def get_fitted_font(draw, text, max_width, font_path, max_font_size=40):
         if text_width <= max_width:
             return font
 
-        size -= 2  # Shrink step
+        size -= 2
 
     return ImageFont.truetype(str(font_path), 10)
 
@@ -71,37 +69,79 @@ def get_fitted_font(draw, text, max_width, font_path, max_font_size=40):
 def apply_holo_effect(img, rarity):
     if rarity == "R": return img
     
-    # Standard SR logic stays similar but slightly cleaner
     if rarity == "SR":
         img = ImageEnhance.Color(img).enhance(1.2)
         overlay = Image.new("RGBA", img.size, THEMES["SR"]["rgb"] + (40,))
         return Image.alpha_composite(img.convert("RGBA"), overlay)
 
-    # SSR "Rainbow" Logic
     if rarity == "SSR":
-        # 1. Boost colors significantly to prep for the holo look
         img = ImageEnhance.Color(img).enhance(1.6)
         img = ImageEnhance.Contrast(img).enhance(1.15)
         img = img.convert("RGBA")
 
-        # 2. Create a diagonal rainbow gradient overlay
         rainbow = Image.new("RGBA", img.size)
         draw = ImageDraw.Draw(rainbow)
         
-        # Draw diagonal lines of varying hues
         for i in range(img.width + img.height):
             hue = int((i / (img.width + img.height)) * 255)
-            # Convert hue to a bright RGB (Simplified HSL to RGB)
             if hue < 85: r, g, b = 255, hue * 3, 0
             elif hue < 170: r, g, b = 255 - (hue - 85) * 3, 255, 0
             else: r, g, b = 0, 255, (hue - 170) * 3
             
-            # Low opacity (40) ensures the character is still visible
             draw.line([(i, 0), (0, i)], fill=(r, g, b, 45), width=2)
             
         return Image.alpha_composite(img, rainbow)
     
     return img
+
+
+def draw_dupe_stars(draw, dupe_level, card_width):
+    """
+    Draws stars based on the 'Lap' logic:
+    - 1-5 dupes: 1-5 yellow stars.
+    - 6-10 dupes: 5 stars total, where (dupe - 5) are Red and the rest are Yellow.
+    """
+    if not dupe_level or dupe_level <= 0:
+        return
+
+    # Determine counts based on 'Lap' logic (max 5 slots)
+    if dupe_level <= 5:
+        red_count = 0
+        yellow_count = dupe_level
+    else:
+        # Lap 2: Red stars (capped at 5)
+        red_count = min(5, dupe_level - 5)
+        # Remaining slots are yellow (to make a total of 5 stars)
+        yellow_count = 5 - red_count
+
+    total_stars = red_count + yellow_count
+    star_size = 12
+    gap = 2
+    
+    # Center stars horizontally
+    total_width = (total_stars * star_size) + ((total_stars - 1) * gap)
+    current_x = (card_width - total_width) / 2
+    # Positioned just above the name box (which starts at y=250)
+    y_pos = 235 
+
+    def draw_star_shape(x, y, color):
+        # A simple 5-point star polygon
+        points = [
+            (x + 6, y), (x + 8, y + 4), (x + 12, y + 4), 
+            (x + 9, y + 7), (x + 10, y + 11), (x + 6, y + 9), 
+            (x + 2, y + 11), (x + 3, y + 7), (x, y + 4), (x + 4, y + 4)
+        ]
+        draw.polygon(points, fill=color, outline="black")
+
+    # Draw Red Stars first (representing the second lap)
+    for _ in range(red_count):
+        draw_star_shape(current_x, y_pos, STAR_RED)
+        current_x += star_size + gap
+    
+    # Draw Yellow Stars
+    for _ in range(yellow_count):
+        draw_star_shape(current_x, y_pos, STAR_YELLOW)
+        current_x += star_size + gap
 
 
 def create_character_card(char_data, card_size=(200, 300)):
@@ -118,11 +158,15 @@ def create_character_card(char_data, card_size=(200, 300)):
         img = apply_holo_effect(img, char_data['rarity'])
         card.paste(img, (0, 0))
 
+    # --- DUPE STARS ---
+    # Drawn after pasting the image to ensure they sit on top and aren't affected by holo sheen
+    dupe_level = char_data.get('dupe_level', 0)
+    draw_dupe_stars(draw, dupe_level, card_size[0])
+
     # Text Box
     draw.rectangle([0, 250, 200, 300], fill="#151515")
     
     if rarity == "SSR":
-        # Draw a rainbow line instead of a gold one
         for x in range(200):
             hue = int((x / 200) * 255)
             if hue < 85: color = (255, hue * 3, 0)
@@ -132,21 +176,16 @@ def create_character_card(char_data, card_size=(200, 300)):
     else:
         draw.rectangle([0, 250, 200, 254], fill=theme["hex"])
 
-    # --- NAME SCALING LOGIC ---
+    # Name Scaling
     name = char_data['name']
-
-    # Get a font that fits perfectly inside 190px (leaving 5px padding on each side)
     font_name = get_fitted_font(draw, name, 190, FONT_PATH, max_font_size=36)
 
-    # Center Calculations
     bbox = draw.textbbox((0, 0), name, font=font_name)
     text_width = bbox[2] - bbox[0]
     text_height = bbox[3] - bbox[1]
 
     x_pos = (200 - text_width) / 2
-    # Vertical Center of the 50px box (starting at 250)
     y_pos = 250 + (50 - text_height) / 2 - 4
-
     draw.text((x_pos, y_pos), name, font=font_name, fill="white")
 
     # Rarity Tag
@@ -157,40 +196,27 @@ def create_character_card(char_data, card_size=(200, 300)):
 
     rarity_text = char_data['rarity']
     text_x, text_y = 8, 5
-    draw.text((text_x + 2, text_y + 2),
-              rarity_text,
-              font=font_bold,
-              fill="black")
+    draw.text((text_x + 2, text_y + 2), rarity_text, font=font_bold, fill="black")
     draw.text((text_x, text_y), rarity_text, font=font_bold, fill=theme["hex"])
-    draw.text((text_x, text_y),
-              rarity_text,
-              font=font_bold,
-              fill=theme["hex"],
-              stroke_width=1,
-              stroke_fill="white")
+    draw.text((text_x, text_y), rarity_text, font=font_bold, fill=theme["hex"], stroke_width=1, stroke_fill="white")
 
     # Border
     border_width = 5 if rarity != "R" else 2
     if rarity == "SSR":
-        # Draw the rim using 4 rainbow-gradient lines
-        for i in range(200): # Top and Bottom
+        for i in range(200):
             hue = int((i / 200) * 255)
             if hue < 85: color = (255, hue * 3, 0)
             elif hue < 170: color = (255 - (hue - 85) * 3, 255, 0)
             else: color = (0, 255, (hue - 170) * 3)
-            # Top Rim
             draw.line([(i, 0), (i, border_width)], fill=color)
-            # Bottom Rim
             draw.line([(i, 299), (i, 299 - border_width)], fill=color)
         
-        for j in range(300): # Left and Right
+        for j in range(300):
             hue = int((j / 300) * 255)
             if hue < 85: color = (255, hue * 3, 0)
             elif hue < 170: color = (255 - (hue - 85) * 3, 255, 0)
             else: color = (0, 255, (hue - 170) * 3)
-            # Left Rim
             draw.line([(0, j), (border_width, j)], fill=color)
-            # Right Rim
             draw.line([(199, j), (199 - border_width, j)], fill=color)
     else:
         border_color = theme["hex"] if rarity != "R" else "#333333"
@@ -202,13 +228,10 @@ def create_character_card(char_data, card_size=(200, 300)):
 async def generate_10_pull_image(character_list):
     canvas_w, canvas_h = 1100, 700
     try:
-        base_img = Image.open(str(BG_PATH)).convert("RGBA").resize(
-            (canvas_w, canvas_h))
+        base_img = Image.open(str(BG_PATH)).convert("RGBA").resize((canvas_w, canvas_h))
     except:
-        print(f"⚠️ Warning: BG not found at {BG_PATH}")
         base_img = Image.new("RGBA", (canvas_w, canvas_h), "#121212")
 
-    # FIX: Fetch all images concurrently to prevent timeouts/stuck commands
     tasks = [fetch_image(char['image_url']) for char in character_list]
     downloaded_images = await asyncio.gather(*tasks)
     for i, img in enumerate(downloaded_images):
@@ -232,17 +255,10 @@ async def generate_10_pull_image(character_list):
 
 
 async def generate_team_image(team_list):
-    """
-    Draws the 5-Stack Team Banner with a flat black background and detailed stats.
-    team_list: List of dicts containing 'name', 'power', 'ability_tags', etc.
-    """
-    # 1. Canvas Setup (Wide Banner - increased height for stats)
     canvas_w, canvas_h = 1200, 550
-    # Flat Black Background as requested
     base_img = Image.new("RGBA", (canvas_w, canvas_h), (10, 10, 10, 255))
     draw = ImageDraw.Draw(base_img)
 
-    # 2. Fonts
     try:
         font_large = ImageFont.truetype(str(FONT_PATH), 45)
         font_medium = ImageFont.truetype(str(FONT_PATH), 26)
@@ -250,16 +266,12 @@ async def generate_team_image(team_list):
     except:
         font_large = font_medium = font_small = ImageFont.load_default()
 
-    # 3. Total Power Calculation & Header
     total_power = sum(char['power'] for char in team_list if char)
     header_text = f"SQUAD TOTAL POWER: {total_power:,}"
-    
-    # Center the header
     bbox = draw.textbbox((0, 0), header_text, font=font_large)
     tx_w = bbox[2] - bbox[0]
     draw.text(((canvas_w - tx_w) / 2, 25), header_text, font=font_large, fill="#FFD700")
 
-    # 4. Fetch Images concurrently
     tasks = []
     indices = []
     for i, char in enumerate(team_list):
@@ -272,41 +284,29 @@ async def generate_team_image(team_list):
         for i, img in zip(indices, downloaded):
             team_list[i]['image_obj'] = img
 
-    # 5. Layout (200x300 cards + gap)
-    start_x = 70
-    start_y = 100 
-    gap_x = 15
+    start_x, start_y, gap_x = 70, 100, 15
 
     for i, char in enumerate(team_list):
-        x = start_x + (i * (200 + gap_x))
-        y = start_y
+        x, y = start_x + (i * (200 + gap_x)), start_y
 
         if char:
-            # Draw the Card
             card = create_character_card(char)
             base_img.paste(card, (x, y), card)
             
-            # Draw Individual Power
             p_text = f"⚔️ {char['power']:,}"
             p_bbox = draw.textbbox((0, 0), p_text, font=font_medium)
             px_w = p_bbox[2] - p_bbox[0]
             draw.text((x + (200 - px_w) / 2, y + 310), p_text, font=font_medium, fill="white")
             
-            # Draw Skills
             import json
             skills = char.get('ability_tags', [])
-            
-            # Robustly handle string vs list and empty arrays
             if isinstance(skills, str):
                 try:
                     skills = json.loads(skills)
                 except:
-                    # If it's a raw string like "surge", wrap it in a list
                     skills = [skills] if skills.strip() else []
             
-            # Clean up empty elements and format for display
             active_skills = [str(s).capitalize() for s in skills if s and str(s).strip()]
-            
             s_text = ", ".join(active_skills) if active_skills else "No Skills"
             s_color = "#AAAAAA" if not active_skills else "#00FF7F"
             s_bbox = draw.textbbox((0, 0), s_text, font=font_small)
@@ -314,18 +314,15 @@ async def generate_team_image(team_list):
             draw.text((x + (200 - sx_w) / 2, y + 345), s_text, font=font_small, fill=s_color)
             
         else:
-            # Draw "Empty Slot" Placeholder
             empty_slot = Image.new("RGBA", (200, 300), (30, 30, 30, 255))
             e_draw = ImageDraw.Draw(empty_slot)
             e_draw.rectangle([0, 0, 199, 299], outline="#444444", width=2)
-            
             text = f"SLOT {i + 1}"
             bbox = e_draw.textbbox((0, 0), text, font=font_medium)
             tx_w, tx_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
             e_draw.text(((200 - tx_w) / 2, (300 - tx_h) / 2), text, font=font_medium, fill="#666666")
             base_img.paste(empty_slot, (x, y), empty_slot)
 
-    # 6. Save
     output = io.BytesIO()
     base_img.save(output, format="PNG")
     output.seek(0)
@@ -333,14 +330,9 @@ async def generate_team_image(team_list):
 
 
 async def generate_banner_image(character_data_list, banner_name, end_timestamp):
-    """
-    Creates a banner image featuring rate-up units and the expiration date.
-    """
-    banner_w, banner_h = 800, 450 # Increased height slightly for better text spacing
+    banner_w, banner_h = 800, 450
     canvas = Image.new('RGB', (banner_w, banner_h), (20, 20, 20))
-    
-    num_chars = len(character_data_list)
-    strip_w = banner_w // num_chars
+    strip_w = banner_w // len(character_data_list)
 
     async with aiohttp.ClientSession() as session:
         for i, char in enumerate(character_data_list):
@@ -349,7 +341,6 @@ async def generate_banner_image(character_data_list, banner_name, end_timestamp)
                     img_data = await resp.read()
                     char_img = Image.open(io.BytesIO(img_data)).convert("RGBA")
                     
-                    # Resize and Crop logic
                     aspect = char_img.width / char_img.height
                     target_h = banner_h
                     target_w = int(target_h * aspect)
@@ -357,23 +348,16 @@ async def generate_banner_image(character_data_list, banner_name, end_timestamp)
                     
                     left = (char_img.width - strip_w) // 2
                     char_img = char_img.crop((left, 0, left + strip_w, banner_h))
-                    
                     canvas.paste(char_img, (i * strip_w, 0), char_img)
 
-    # UI Overlay
     draw = ImageDraw.Draw(canvas)
-    # Path from your project assets
     font_bold = ImageFont.truetype("assets/fonts/bold_font.ttf", 45)
     font_small = ImageFont.truetype("assets/fonts/bold_font.ttf", 25)
     
-    # Semi-transparent footer
     overlay_h = 100
     draw.rectangle([0, banner_h - overlay_h, banner_w, banner_h], fill=(0, 0, 0, 180))
-    
-    # Title: Rate Up Name
     draw.text((20, banner_h - 90), f"RATE UP: {banner_name.upper()}", font=font_bold, fill=(255, 215, 0))
     
-    # Subtitle: Expiration Date
     expiry_str = datetime.fromtimestamp(end_timestamp).strftime("%b %d, %Y - %H:%M")
     draw.text((22, banner_h - 35), f"ENDS: {expiry_str} UTC", font=font_small, fill=(200, 200, 200))
 
@@ -382,86 +366,64 @@ async def generate_banner_image(character_data_list, banner_name, end_timestamp)
     out.seek(0)
     return out
 
+
 async def generate_battle_image(team1, team2, name1, name2, winner_idx=None):
-    """
-    Generates a VS screen.
-    winner_idx: 0 = Draw, 1 = Team 1 Wins, 2 = Team 2 Wins.
-    """
-    # 1. Setup Canvas (Balanced Height/Width for stacking)
     W, H = 1200, 850
     canvas = Image.new("RGBA", (W, H), (15, 15, 15, 255))
     draw = ImageDraw.Draw(canvas)
     
-    # 2. Helper to fetch and prep cards
     async def prep_team_cards(team_list, is_right_side=False):
         tasks = []
         for char in team_list:
             if char.get('image_url'):
                 tasks.append(fetch_image(char['image_url']))
             else:
-                # Placeholder for NPCs with no image
-                tasks.append(asyncio.sleep(0, result=None)) # Return None immediately
+                tasks.append(asyncio.sleep(0, result=None))
         
         images = await asyncio.gather(*tasks)
         cards = []
         for i, img in enumerate(images):
-            # Inject image object back into data for card creator
             team_list[i]['image_obj'] = img
             card = create_character_card(team_list[i])
-            
-            # Mirror enemies to face the player
             if is_right_side:
                 card = ImageOps.mirror(card)
-            
             cards.append(card)
         return cards
 
-    # 3. Process Teams Concurrently
     cards1, cards2 = await asyncio.gather(
         prep_team_cards(team1, is_right_side=False),
         prep_team_cards(team2, is_right_side=True)
     )
 
-    # 4. Layout Constants (Grid-style positioning)
-    card_w, card_h = 200, 300
-    gap = 20
+    card_w, card_h, gap = 200, 300, 20
     start_x = (W - (5 * card_w + 4 * gap)) // 2
     
-    # Draw Team 1 (Attacker - Top Row)
     for i, card in enumerate(cards1):
-        x = start_x + (i * (card_w + gap))
-        y = 100
+        x, y = start_x + (i * (card_w + gap)), 100
         if winner_idx == 2: card = ImageOps.grayscale(card)
         canvas.paste(card, (x, y), card)
 
-    # Draw Team 2 (Defender - Bottom Row)
     for i, card in enumerate(cards2):
-        x = start_x + (i * (card_w + gap))
-        y = 500
+        x, y = start_x + (i * (card_w + gap)), 500
         if winner_idx == 1: card = ImageOps.grayscale(card)
         canvas.paste(card, (x, y), card)
 
-    # 5. Overlay & VS Text
     try:
         font_vs = ImageFont.truetype(str(FONT_PATH), 120)
         font_name = ImageFont.truetype(str(FONT_PATH), 45)
     except:
         font_vs = font_name = ImageFont.load_default()
 
-    # Central VS Logo
     vs_text = "V S"
     v_bbox = draw.textbbox((0, 0), vs_text, font=font_vs)
     v_w = v_bbox[2] - v_bbox[0]
     draw.text(((W - v_w) // 2, 400), vs_text, font=font_vs, fill="#FF4500", stroke_width=2, stroke_fill="white")
-    
-    # Names positioned near their respective teams
     draw.text((start_x, 40), f"PLAYER: {name1.upper()}", font=font_name, fill="cyan")
     
     bbox2 = draw.textbbox((0, 0), f"OPPONENT: {name2.upper()}", font=font_name)
     n2_w = bbox2[2] - bbox2[0]
     draw.text((W - start_x - n2_w, 440), f"OPPONENT: {name2.upper()}", font=font_name, fill="orange")
 
-    # 6. Save
     out = io.BytesIO()
     canvas.save(out, format="PNG")
     out.seek(0)
