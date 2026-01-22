@@ -14,9 +14,9 @@ class Buy(commands.Cog):
         """
         # Ensure the command is used in a guild
         if not ctx.guild:
-            return await ctx.send("❌ This command must be used in a server.")
+            return await ctx.reply("❌ This command must be used in a server.")
 
-        loading = await ctx.send(f"🔄 Processing purchase for {amount} pull(s)...")
+        loading = await ctx.reply(f"🔄 Processing purchase for {amount} pull(s)...")
 
         # The Economy.buy_pulls_with_boat handles API calls and DB updates
         result = await Economy.buy_pulls_with_boat(

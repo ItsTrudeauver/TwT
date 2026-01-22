@@ -193,9 +193,9 @@ class Gacha(commands.Cog):
         # 1. Retrieve the active banner record from the database
         banner = await self.get_active_banner()
         if not banner:
-            return await ctx.send("🎫 No banner is currently active.")
+            return await ctx.reply("🎫 No banner is currently active.")
 
-        loading = await ctx.send("🔍 *Retrieving banner details...*")
+        loading = await ctx.reply("🔍 *Retrieving banner details...*")
         
         try:
             # 2. Fetch metadata (especially image URLs) for each rate-up ID
@@ -218,22 +218,22 @@ class Gacha(commands.Cog):
             
             # 4. Clean up and send the image
             await loading.delete()
-            await ctx.send(file=discord.File(fp=img_output, filename="banner.png"))
+            await ctx.reply(file=discord.File(fp=img_output, filename="banner.png"))
             
         except Exception as e:
-            await ctx.send(f"⚠️ Error displaying banner: `{e}`")
+            await ctx.reply(f"⚠️ Error displaying banner: `{e}`")
         
     @commands.command(name="pull")
     async def pull_character(self, ctx, amount: int = 1):
-        if amount not in [1, 10]: return await ctx.send("❌ Only 1 or 10 pulls allowed.")
+        if amount not in [1, 10]: return await ctx.reply("❌ Only 1 or 10 pulls allowed.")
         user_data = await get_user(ctx.author.id)
         cost = amount * GEMS_PER_PULL
         is_free = await Economy.is_free_pull(ctx.author, self.bot)
 
         if not is_free and user_data['gacha_gems'] < cost:
-            return await ctx.send(f"❌ Need **{cost:,} Gems**. Balance: **{user_data['gacha_gems']:,}**")
+            return await ctx.reply(f"❌ Need **{cost:,} Gems**. Balance: **{user_data['gacha_gems']:,}**")
 
-        loading = await ctx.send(f"🎰 *Pulling {amount}x...*")
+        loading = await ctx.reply(f"🎰 *Pulling {amount}x...*")
         try:
             banner = await self.get_active_banner()
             if not is_free:
@@ -271,22 +271,22 @@ class Gacha(commands.Cog):
                 embed = discord.Embed(title=f"✨ {c['name']}", description=desc, color=0xFFD700)
                 embed.set_image(url=c['image_url'])
                 await loading.delete()
-                await ctx.send(embed=embed)
+                await ctx.reply(embed=embed)
             else:
                 img = await generate_10_pull_image(pulled_chars)
                 await loading.delete()
                 msg = f"♻️ **Auto-scrapped extras for {scrapped_gems:,} Gems!**" if scrapped_gems > 0 else ""
-                await ctx.send(content=msg, file=discord.File(fp=img, filename="10pull.png"))
+                await ctx.reply(content=msg, file=discord.File(fp=img, filename="10pull.png"))
 
         except Exception as e:
-            await ctx.send(f"⚠️ Error: `{e}`")
+            await ctx.reply(f"⚠️ Error: `{e}`")
 
     @commands.command(name="starter")
     async def starter_pull(self, ctx):
         user_data = await get_user(ctx.author.id)
-        if user_data.get('has_claimed_starter'): return await ctx.send("❌ Already claimed!")
+        if user_data.get('has_claimed_starter'): return await ctx.reply("❌ Already claimed!")
 
-        loading = await ctx.send("🎁 *Opening Starter Pack...*")
+        loading = await ctx.reply("🎁 *Opening Starter Pack...*")
         try:
             async with aiohttp.ClientSession() as session:
                 # 1 Guaranteed SSR + 9 Random
@@ -306,9 +306,9 @@ class Gacha(commands.Cog):
             
             img = await generate_10_pull_image(chars)
             await loading.delete()
-            await ctx.send(content="🎉 **Starter Pack Opened!**", file=discord.File(fp=img, filename="starter.png"))
+            await ctx.reply(content="🎉 **Starter Pack Opened!**", file=discord.File(fp=img, filename="starter.png"))
         except Exception as e:
-            await ctx.send(f"⚠️ Error: `{e}`")
+            await ctx.reply(f"⚠️ Error: `{e}`")
 
 async def setup(bot):
     await bot.add_cog(Gacha(bot))

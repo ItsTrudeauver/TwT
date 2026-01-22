@@ -148,7 +148,7 @@ class Shop(commands.Cog):
         items = await self._get_shop_rotation()
         
         if not items:
-            return await ctx.send("⚠️ The shop is currently empty (No characters found in cache).")
+            return await ctx.reply("⚠️ The shop is currently empty (No characters found in cache).")
 
         user = await get_user(ctx.author.id)
         user_level = user.get('team_level', 1)
@@ -186,7 +186,7 @@ class Shop(commands.Cog):
 
         # Attach Dropdown View
         view = ShopView(items, self.bot)
-        await ctx.send(embed=embed, view=view)
+        await ctx.reply(embed=embed, view=view)
 
 async def setup(bot):
     await bot.add_cog(Shop(bot))

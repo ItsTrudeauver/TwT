@@ -26,11 +26,11 @@ class Daily(commands.Cog):
         async with pool.acquire() as conn:
             user = await conn.fetchrow("SELECT last_daily_exchange FROM users WHERE user_id = $1", user_id)
             if user['last_daily_exchange'] and user['last_daily_exchange'].date() >= now:
-                return await ctx.send("❌ Already checked in today! Reset at 00:00 UTC.")
+                return await ctx.reply("❌ Already checked in today! Reset at 00:00 UTC.")
 
             await add_currency(user_id, 1500)
             await conn.execute("UPDATE users SET last_daily_exchange = CURRENT_TIMESTAMP WHERE user_id = $1", user_id)
-            await ctx.send("📅 **Check-in Successful!** +1,500 Gems awarded.")
+            await ctx.reply("📅 **Check-in Successful!** +1,500 Gems awarded.")
 
     @commands.command(name="tasks")
     async def view_tasks(self, ctx):
@@ -56,7 +56,7 @@ class Daily(commands.Cog):
             status = "✅ Claimed" if completed.get(key) else ("🎁 !claim " + key if progress.get(key) else "⏳ 0/1")
             embed.add_field(name=f"NPC: {key.capitalize()}", value=f"Reward: {info['reward']} Gems | {status}", inline=False)
 
-        await ctx.send(embed=embed)
+        await ctx.reply(embed=embed)
 
     @commands.command(name="claim")
     async def claim_task(self, ctx, task: str):
@@ -66,16 +66,16 @@ class Daily(commands.Cog):
         pool = await get_db_pool()
         
         reward = 500 if task == "pvp" else NPC_DATA.get(task, {}).get("reward")
-        if not reward: return await ctx.send("❌ Invalid task.")
+        if not reward: return await ctx.reply("❌ Invalid task.")
 
         async with pool.acquire() as conn:
             row = await conn.fetchrow("SELECT progress, is_claimed FROM daily_tasks WHERE user_id = $1 AND task_key = $2", user_id, task)
-            if not row or row['progress'] == 0: return await ctx.send("❌ Task not completed yet.")
-            if row['is_claimed']: return await ctx.send("⚠️ Reward already claimed.")
+            if not row or row['progress'] == 0: return await ctx.reply("❌ Task not completed yet.")
+            if row['is_claimed']: return await ctx.reply("⚠️ Reward already claimed.")
 
             await add_currency(user_id, reward)
             await conn.execute("UPDATE daily_tasks SET is_claimed = TRUE WHERE user_id = $1 AND task_key = $2", user_id, task)
-            await ctx.send(f"🎉 **Claimed {reward:,} Gems** for {task} task!")
+            await ctx.reply(f"🎉 **Claimed {reward:,} Gems** for {task} task!")
 
 async def setup(bot):
     await bot.add_cog(Daily(bot))

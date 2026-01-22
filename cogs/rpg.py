@@ -70,7 +70,7 @@ class RPG(commands.Cog):
         clean_slots = [s for s in slots if s is not None]
         
         if len(set(clean_slots)) != len(clean_slots):
-            await ctx.send("❌ Duplicate IDs detected!")
+            await ctx.reply("❌ Duplicate IDs detected!")
             return
 
         pool = await get_db_pool()
@@ -79,7 +79,7 @@ class RPG(commands.Cog):
                                     str(ctx.author.id), clean_slots)
             
             if len(owned) != len(clean_slots):
-                await ctx.send("❌ You do not own one of those IDs.")
+                await ctx.reply("❌ You do not own one of those IDs.")
                 return
 
             final_slots = clean_slots + [None] * (5 - len(clean_slots))
@@ -92,19 +92,19 @@ class RPG(commands.Cog):
                     slot_5=EXCLUDED.slot_5
             """, str(ctx.author.id), *final_slots)
             
-            await ctx.send(f"✅ Squad composition updated.")
+            await ctx.reply(f"✅ Squad composition updated.")
 
     @commands.command(name="team")
     async def view_team(self, ctx, user: discord.Member = None):
         target = user or ctx.author
-        loading = await ctx.send("🛡️ *Analyzing Squad Composition...*")
+        loading = await ctx.reply("🛡️ *Analyzing Squad Composition...*")
         power, team_list = await self.get_team_data(target.id)
         
         try:
             image_data = await generate_team_image(team_list)
             file = discord.File(fp=image_data, filename="team_banner.png")
             await loading.delete()
-            await ctx.send(content=f"**Officer:** {target.name} | **Power:** {power:,}", file=file)
+            await ctx.reply(content=f"**Officer:** {target.name} | **Power:** {power:,}", file=file)
         except Exception as e:
             await loading.edit(content=f"⚠️ Visual Error: {e}")
 

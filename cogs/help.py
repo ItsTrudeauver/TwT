@@ -18,7 +18,7 @@ class Help(commands.Cog):
         if command_name:
             cmd = self.bot.get_command(command_name)
             if not cmd or cmd.hidden:
-                return await ctx.send("❌ Command not found.")
+                return await ctx.reply("❌ Command not found.")
 
             embed = discord.Embed(title=f"📖 Help: {cmd.name.upper()}", color=0xF1C40F)
             
@@ -34,7 +34,7 @@ class Help(commands.Cog):
             if cmd.aliases:
                 embed.add_field(name="Aliases", value=", ".join([f"`{a}`" for a in cmd.aliases]), inline=False)
 
-            await ctx.send(embed=embed)
+            await ctx.reply(embed=embed)
             return
 
         # 2. GENERAL HELP MENU (e.g., !help)
@@ -78,7 +78,7 @@ class Help(commands.Cog):
 
         # Footer
         embed.set_footer(text="🔒 = Admin Only | [] = Optional Arg")
-        await ctx.send(embed=embed)
+        await ctx.reply(embed=embed)
 
 async def setup(bot):
     # FIXED: removed 'await' from this line

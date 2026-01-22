@@ -80,7 +80,7 @@ class Admin(commands.Cog):
     async def add_skill(self, ctx, anilist_id: int, *, skill_name: str):
         skill = get_skill_info(skill_name)
         if not skill:
-            await ctx.send(f"❌ Invalid skill. Choose from: `{', '.join(list_all_skills())}`")
+            await ctx.reply(f"❌ Invalid skill. Choose from: `{', '.join(list_all_skills())}`")
             return
 
         pool = await get_db_pool()
@@ -89,9 +89,9 @@ class Admin(commands.Cog):
             
             if not char:
                 gacha_cog = self.bot.get_cog("Gacha")
-                if not gacha_cog: return await ctx.send("❌ Gacha system is offline.")
+                if not gacha_cog: return await ctx.reply("❌ Gacha system is offline.")
 
-                loading = await ctx.send(f"🔍 ID `{anilist_id}` not in cache. Fetching from AniList...")
+                loading = await ctx.reply(f"🔍 ID `{anilist_id}` not in cache. Fetching from AniList...")
                 async with aiohttp.ClientSession() as session:
                     # Default fetch without forced rarity
                     api_data = await gacha_cog.fetch_character_by_id(session, anilist_id)
@@ -106,7 +106,7 @@ class Admin(commands.Cog):
             target_skill = skill_name.title()
 
             if target_skill in current_tags:
-                return await ctx.send(f"⚠️ **{char['name']}** already has the **{target_skill}** skill.")
+                return await ctx.reply(f"⚠️ **{char['name']}** already has the **{target_skill}** skill.")
 
             current_tags.append(target_skill)
             
@@ -117,7 +117,7 @@ class Admin(commands.Cog):
                 await conn.execute("UPDATE characters_cache SET ability_tags=$1 WHERE anilist_id=$2", 
                                  json.dumps(current_tags), anilist_id)
 
-            await ctx.send(f"✅ Added **{target_skill}** to **{char['name']}**!")
+            await ctx.reply(f"✅ Added **{target_skill}** to **{char['name']}**!")
 
     @commands.command(name="set_banner")
     @commands.is_owner()
@@ -133,14 +133,14 @@ class Admin(commands.Cog):
         matches = re.findall(r'\[(.*?)\]', content)
 
         if len(matches) < 3:
-            return await ctx.send("❌ Invalid Format.\nUsage: `!set_banner [days] [Name] [ID:RARITY] ...`")
+            return await ctx.reply("❌ Invalid Format.\nUsage: `!set_banner [days] [Name] [ID:RARITY] ...`")
 
         try:
             days = int(matches[0])
             name = matches[1]
             unit_args = matches[2:] # List of "ID:RARITY" strings
         except ValueError:
-            return await ctx.send("❌ 'Days' must be a number.")
+            return await ctx.reply("❌ 'Days' must be a number.")
 
         end_time = int(time.time() + (days * 86400))
         gacha_cog = self.bot.get_cog("Gacha")
@@ -152,17 +152,17 @@ class Admin(commands.Cog):
         async with aiohttp.ClientSession() as session:
             for item in unit_args:
                 if ":" not in item:
-                    return await ctx.send(f"❌ Invalid Unit Format: `{item}`. Use `ID:RARITY` (e.g., `12345:SSR`)")
+                    return await ctx.reply(f"❌ Invalid Unit Format: `{item}`. Use `ID:RARITY` (e.g., `12345:SSR`)")
                 
                 try:
                     cid_str, rarity_str = item.split(":")
                     cid = int(cid_str.strip())
                     rarity = rarity_str.strip().upper()
                 except:
-                    return await ctx.send(f"❌ Parse error on `{item}`.")
+                    return await ctx.reply(f"❌ Parse error on `{item}`.")
 
                 if rarity not in ["SSR", "SR", "R"]:
-                    return await ctx.send(f"❌ Invalid Rarity `{rarity}`. Use SSR, SR, or R.")
+                    return await ctx.reply(f"❌ Invalid Rarity `{rarity}`. Use SSR, SR, or R.")
 
                 # Delay to prevent rate limits
                 await asyncio.sleep(0.5)
@@ -176,10 +176,10 @@ class Admin(commands.Cog):
                     # IMPORTANT: Cache immediately so the database knows this ID = this Rarity
                     await batch_cache_characters([data])
                 else:
-                    return await ctx.send(f"❌ Could not fetch ID `{cid}` from AniList.")
+                    return await ctx.reply(f"❌ Could not fetch ID `{cid}` from AniList.")
 
         if not char_data_list:
-            return await ctx.send("❌ No valid characters found.")
+            return await ctx.reply("❌ No valid characters found.")
 
         # 3. Generate Banner Image
         banner_img = await generate_banner_image(char_data_list, name, end_time)
@@ -194,7 +194,7 @@ class Admin(commands.Cog):
             """, name, banner_ids, end_time)
         
         display_time = f"<t:{end_time}:F> (<t:{end_time}:R>)"
-        await ctx.send(
+        await ctx.reply(
             f"✅ **Banner Active: {name}**\nParsed {len(banner_ids)} units.\n📅 **Ends:** {display_time}", 
             file=discord.File(fp=banner_img, filename="banner.png")
         )
@@ -211,12 +211,12 @@ class Admin(commands.Cog):
                     WHERE i.user_id = $1 AND c.rarity = 'R' AND i.is_locked = FALSE
                 """, user_id)
                 if not chars:
-                    return await ctx.send("No scrapable R characters found.")
+                    return await ctx.reply("No scrapable R characters found.")
                 
                 total_scrap = sum(int(c['true_power'] * 0.1) for c in chars)
                 await conn.execute("DELETE FROM inventory WHERE id = ANY($1)", [c['id'] for c in chars])
                 await conn.execute("UPDATE users SET scrap = scrap + $1 WHERE user_id = $2", total_scrap, user_id)
-                await ctx.send(f"Scrapped {len(chars)} characters for {total_scrap} scrap.")
+                await ctx.reply(f"Scrapped {len(chars)} characters for {total_scrap} scrap.")
 
     @commands.command(name="override_unit")
     @commands.is_owner()
@@ -224,7 +224,7 @@ class Admin(commands.Cog):
         """Manually sets rarity and power for a unit and locks it from being updated by standard logic."""
         rarity = rarity.upper()
         if rarity not in ["SSR", "SR", "R"]:
-            return await ctx.send("❌ Rarity must be SSR, SR, or R.")
+            return await ctx.reply("❌ Rarity must be SSR, SR, or R.")
 
         pool = await get_db_pool()
         async with pool.acquire() as conn:
@@ -237,7 +237,7 @@ class Admin(commands.Cog):
                 async with aiohttp.ClientSession() as session:
                     api_data = await gacha_cog.fetch_character_by_id(session, anilist_id)
                 if not api_data: 
-                    return await ctx.send("❌ Could not find that unit on AniList.")
+                    return await ctx.reply("❌ Could not find that unit on AniList.")
                 
                 # Use a direct UPSERT to create the record with the override flag set
                 await conn.execute("""
@@ -259,7 +259,7 @@ class Admin(commands.Cog):
                 name = char['name']
             
             name = char['name'] if char else data['name']
-            await ctx.send(f"✅ **{name}** (ID: {anilist_id}) overridden to **{rarity}** with **{power:,} Power**.")
+            await ctx.reply(f"✅ **{name}** (ID: {anilist_id}) overridden to **{rarity}** with **{power:,} Power**.")
 
 async def setup(bot):
     await bot.add_cog(Admin(bot))

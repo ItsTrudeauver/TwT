@@ -62,7 +62,7 @@ class Event(commands.Cog):
         embed.add_field(name="Commands", value="`!fight` - Deal Damage (1 Ticket)\n`!rank` - View Leaderboard")
         embed.set_footer(text="Top 1 wins the Exclusive Unit!")
         
-        await ctx.send(embed=embed)
+        await ctx.reply(embed=embed)
 
     @commands.command(name="fight")
     async def fight_boss(self, ctx):
@@ -71,7 +71,7 @@ class Event(commands.Cog):
         data = await self._get_event_data(user_id)
         
         if data['tickets'] < 1:
-            return await ctx.send("❌ **Out of Tickets!** Your attempts regenerate daily.")
+            return await ctx.reply("❌ **Out of Tickets!** Your attempts regenerate daily.")
 
         pool = await get_db_pool()
         async with pool.acquire() as conn:
@@ -79,13 +79,13 @@ class Event(commands.Cog):
             team_row = await conn.fetchrow("SELECT slot_1, slot_2, slot_3, slot_4, slot_5 FROM teams WHERE user_id = $1", user_id)
             
             if not team_row:
-                return await ctx.send("⚠️ **No Team Found!**\nPlease use `!stb <id1> <id2> ...` to set your squad first.")
+                return await ctx.reply("⚠️ **No Team Found!**\nPlease use `!stb <id1> <id2> ...` to set your squad first.")
 
             # Filter out None values (empty slots)
             slot_ids = [val for val in dict(team_row).values() if val is not None]
             
             if not slot_ids:
-                return await ctx.send("⚠️ Your team is empty! Use `!stb` to add units.")
+                return await ctx.reply("⚠️ Your team is empty! Use `!stb` to add units.")
 
             # 2. Calculate Power of these specific units
             # Formula: Base * DupeBonus * TeamLevelBonus
@@ -105,7 +105,7 @@ class Event(commands.Cog):
             damage_dealt = sum(r['effective_power'] for r in power_rows)
 
             if damage_dealt == 0:
-                return await ctx.send("⚠️ Your team has 0 power. Check your units!")
+                return await ctx.reply("⚠️ Your team has 0 power. Check your units!")
 
             # 3. Update Score & Tickets
             await conn.execute("""
@@ -114,7 +114,7 @@ class Event(commands.Cog):
                 WHERE user_id = $2
             """, damage_dealt, user_id)
 
-        await ctx.send(
+        await ctx.reply(
             f"⚔️ **Attack Complete!**\n"
             f"Your **Active Team** dealt **{damage_dealt:,} damage**.\n"
             f"📈 **Score Updated!**"
@@ -130,7 +130,7 @@ class Event(commands.Cog):
         """)
         
         if not rows:
-            return await ctx.send("📉 The leaderboard is empty.")
+            return await ctx.reply("📉 The leaderboard is empty.")
 
         embed = discord.Embed(title="🏆 Raid Leaderboard", color=discord.Color.gold())
         desc = ""
@@ -148,18 +148,18 @@ class Event(commands.Cog):
             
         embed.description = desc
         embed.set_footer(text="Tip: Optimize your !stb team for max damage!")
-        await ctx.send(embed=embed)
+        await ctx.reply(embed=embed)
 
     @commands.command(name="end_event")
     @commands.has_permissions(administrator=True)
     async def end_event(self, ctx):
         """(Admin) Ends event and distributes rewards."""
-        await ctx.send("🛑 **ENDING EVENT...**")
+        await ctx.reply("🛑 **ENDING EVENT...**")
         
         pool = await get_db_pool()
         rows = await pool.fetch("SELECT user_id, score FROM event_ranking ORDER BY score DESC")
         
-        if not rows: return await ctx.send("No participants.")
+        if not rows: return await ctx.reply("No participants.")
 
         winner = rows[0]
         
@@ -179,7 +179,7 @@ class Event(commands.Cog):
                     gems, row['user_id']
                 )
 
-        await ctx.send(f"🎉 **Event Ended!**\nWinner: <@{winner['user_id']}> (Score: {winner['score']:,})\nReward: Exclusive Unit (ID {self.EVENT_UNIT_ID})")
+        await ctx.reply(f"🎉 **Event Ended!**\nWinner: <@{winner['user_id']}> (Score: {winner['score']:,})\nReward: Exclusive Unit (ID {self.EVENT_UNIT_ID})")
 
 async def setup(bot):
     await bot.add_cog(Event(bot))

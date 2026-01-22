@@ -72,10 +72,10 @@ class Utility(commands.Cog):
             pages.append(embed)
 
         if not pages:
-            return await ctx.send("No skills found.")
+            return await ctx.reply("No skills found.")
 
         view = SkillPagination(pages)
-        await ctx.send(embed=pages[0], view=view)
+        await ctx.reply(embed=pages[0], view=view)
 
     @commands.command(name="lookup")
     async def lookup(self, ctx, *, name: str):
@@ -84,7 +84,7 @@ class Utility(commands.Cog):
         - Checks DB Cache first.
         - Fallback: Uses Gacha Cog's JSON Map (100% Accurate).
         """
-        loading = await ctx.send(f"🔍 Searching for **{name}**...")
+        loading = await ctx.reply(f"🔍 Searching for **{name}**...")
 
         query = """
         query ($search: String) {
@@ -143,7 +143,7 @@ class Utility(commands.Cog):
                 embed.set_footer(text=f"{source_text} | Rank #{rank if 'rank' in locals() else '???'}")
                 
                 await loading.delete()
-                await ctx.send(embed=embed)
+                await ctx.reply(embed=embed)
 
             except Exception as e:
                 await loading.edit(content=f"⚠️ Error: `{e}`")

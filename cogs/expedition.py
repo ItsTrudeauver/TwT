@@ -51,18 +51,18 @@ class Expedition(commands.Cog):
     async def set_expedition_team(self, ctx, *ids: int):
         """Assigns up to 5 characters to the expedition squad."""
         if len(ids) > 5:
-            return await ctx.send("❌ An expedition team can only have up to 5 characters.")
+            return await ctx.reply("❌ An expedition team can only have up to 5 characters.")
         
         pool = await get_db_pool()
         # Verify ownership of all IDs
         async with pool.acquire() as conn:
             owned = await conn.fetch("SELECT id FROM inventory WHERE user_id = $1 AND id = ANY($2)", str(ctx.author.id), list(ids))
             if len(owned) != len(ids):
-                return await ctx.send("❌ One or more IDs provided are not in your inventory.")
+                return await ctx.reply("❌ One or more IDs provided are not in your inventory.")
 
             await conn.execute("UPDATE expeditions SET slot_ids = $1 WHERE user_id = $2", list(ids), str(ctx.author.id))
         
-        await ctx.send(f"✅ Expedition team updated with {len(ids)} characters.")
+        await ctx.reply(f"✅ Expedition team updated with {len(ids)} characters.")
 
     @commands.command(name="expedition", aliases=["ex"])
     async def expedition_status(self, ctx, action: str = "status"):
@@ -71,24 +71,24 @@ class Expedition(commands.Cog):
         
         if action == "start":
             if not data['slot_ids']:
-                return await ctx.send("❌ Your expedition team is empty! Use `!set_expedition <ids>` first.")
+                return await ctx.reply("❌ Your expedition team is empty! Use `!set_expedition <ids>` first.")
             if data['start_time']:
-                return await ctx.send("⚠️ An expedition is already in progress.")
+                return await ctx.reply("⚠️ An expedition is already in progress.")
             
             pool = await get_db_pool()
             await pool.execute("UPDATE expeditions SET start_time = $1 WHERE user_id = $2", datetime.datetime.utcnow(), user_id)
-            await ctx.send("🚀 **Expedition Started!** Use `!ex claim` later to collect your gems.")
+            await ctx.reply("🚀 **Expedition Started!** Use `!ex claim` later to collect your gems.")
 
         elif action == "claim":
             if not data['start_time']:
-                return await ctx.send("❌ No expedition is currently running.")
+                return await ctx.reply("❌ No expedition is currently running.")
 
             # 1. Timing
             now = datetime.datetime.utcnow()
             duration_seconds = (now - data['start_time']).total_seconds()
             
             if duration_seconds < 60: # 1 minute minimum for testing
-                return await ctx.send("⏳ Expedition has been running for less than a minute. Wait a bit longer!")
+                return await ctx.reply("⏳ Expedition has been running for less than a minute. Wait a bit longer!")
 
             # 2. Get Team & Skills
             team_chars = await self.get_detailed_team(data['slot_ids'])
@@ -173,15 +173,15 @@ class Expedition(commands.Cog):
 
             msg += f"\nMultipliers: `{multiplier:.2f}x`"
             
-            await ctx.send(msg)
+            await ctx.reply(msg)
 
         else: # Default: Status
             if not data['start_time']:
-                await ctx.send("🛰️ **Status:** Idle. Use `!ex start` to begin.")
+                await ctx.reply("🛰️ **Status:** Idle. Use `!ex start` to begin.")
             else:
                 now = datetime.datetime.utcnow()
                 elapsed = now - data['start_time']
-                await ctx.send(f"🛰️ **Status:** Expedition in progress...\nElapsed Time: `{str(elapsed).split('.')[0]}`")
+                await ctx.reply(f"🛰️ **Status:** Expedition in progress...\nElapsed Time: `{str(elapsed).split('.')[0]}`")
 
 async def setup(bot):
     await bot.add_cog(Expedition(bot))

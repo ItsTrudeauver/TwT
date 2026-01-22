@@ -89,7 +89,7 @@ class Inventory(commands.Cog):
     @commands.command(name="gems", aliases=["pc", "wallet", "profile"])
     async def check_balance(self, ctx):
         user_data = await get_user(ctx.author.id)
-        await ctx.send(f"💎 {ctx.author.mention}, you currently have **{user_data['gacha_gems']:,}** Gems.")
+        await ctx.reply(f"💎 {ctx.author.mention}, you currently have **{user_data['gacha_gems']:,}** Gems.")
 
     @commands.command(name="inventory", aliases=["inv"])
     async def show_inventory(self, ctx):
@@ -100,7 +100,7 @@ class Inventory(commands.Cog):
         embed = await view.get_page_content()
         view.update_buttons()
         
-        await ctx.send(embed=embed, view=view)
+        await ctx.reply(embed=embed, view=view)
 
     @commands.command(name="view")
     async def view_character(self, ctx, inventory_id: int):
@@ -123,7 +123,7 @@ class Inventory(commands.Cog):
         """, inventory_id, str(ctx.author.id))
 
         if not row:
-            return await ctx.send("❌ Character not found.")
+            return await ctx.reply("❌ Character not found.")
 
         embed = discord.Embed(title=f"{row['name']}", color=0xF1C40F if row['rarity'] == "SSR" else 0x9B59B6)
         if row['image_url']: embed.set_image(url=row['image_url'])
@@ -141,24 +141,24 @@ class Inventory(commands.Cog):
         
         skills = json.loads(row['ability_tags'])
         embed.add_field(name="SKILLS", value="\n".join([f"• {s}" for s in skills]) if skills else "*None*", inline=False)
-        await ctx.send(embed=embed)
+        await ctx.reply(embed=embed)
 
     @commands.command(name="lock")
     async def lock_character(self, ctx, inventory_id: int):
         pool = await get_db_pool()
         await pool.execute("UPDATE inventory SET is_locked = TRUE WHERE id = $1 AND user_id = $2", inventory_id, str(ctx.author.id))
-        await ctx.send(f"🔒 Character `#{inventory_id}` locked.")
+        await ctx.reply(f"🔒 Character `#{inventory_id}` locked.")
 
     @commands.command(name="unlock")
     async def unlock_character(self, ctx, inventory_id: int):
         pool = await get_db_pool()
         await pool.execute("UPDATE inventory SET is_locked = FALSE WHERE id = $1 AND user_id = $2", inventory_id, str(ctx.author.id))
-        await ctx.send(f"🔓 Character `#{inventory_id}` unlocked.")
+        await ctx.reply(f"🔓 Character `#{inventory_id}` unlocked.")
 
     @commands.command(name="scrap_all", aliases=["mass_scrap"])
     async def scrap_all(self, ctx):
         count, reward = await mass_scrap_r_rarity(ctx.author.id)
-        await ctx.send(f"♻️ Scrapped {count} units for {reward:,} Gems!" if count > 0 else "❌ No units to scrap.")
+        await ctx.reply(f"♻️ Scrapped {count} units for {reward:,} Gems!" if count > 0 else "❌ No units to scrap.")
 
 async def setup(bot):
     await bot.add_cog(Inventory(bot))

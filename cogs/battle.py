@@ -81,7 +81,7 @@ class Battle(commands.Cog):
         attacker_team = await self.get_team_for_battle(user_id)
         
         if not attacker_team:
-            return await ctx.send("❌ Your battle team is empty! Use `!set_team_battle <id1> <id2> ... <id5>` first. Check your unit id (not to be confused with anilist id) with !inv")
+            return await ctx.reply("❌ Your battle team is empty! Use `!set_team_battle <id1> <id2> ... <id5>` first. Check your unit id (not to be confused with anilist id) with !inv")
 
         opponent = None
         difficulty = None
@@ -94,22 +94,22 @@ class Battle(commands.Cog):
             difficulty = target
             mode = difficulty.lower()
         else:
-            return await ctx.send("❓ Who are you fighting? Use `!battle @user` or `!battle easy`.")
+            return await ctx.reply("❓ Who are you fighting? Use `!battle @user` or `!battle easy`.")
 
         defender_name = ""
         defender_team = []
 
         if mode == "pvp":
             defender_team = await self.get_team_for_battle(str(opponent.id))
-            if not defender_team: return await ctx.send(f"❌ {opponent.display_name} has no battle team.")
+            if not defender_team: return await ctx.reply(f"❌ {opponent.display_name} has no battle team.")
             defender_name = opponent.display_name
         else:
             defender_team = self.generate_npc_team(difficulty)
-            if not defender_team: return await ctx.send("❌ Invalid difficulty.")
+            if not defender_team: return await ctx.reply("❌ Invalid difficulty.")
             defender_name = f"{difficulty.capitalize()} NPC"
 
         # Notify Start
-        loading_msg = await ctx.send(f"⚔️ **Generating Battle: {ctx.author.display_name} vs {defender_name}...**")
+        loading_msg = await ctx.reply(f"⚔️ **Generating Battle: {ctx.author.display_name} vs {defender_name}...**")
 
         # --- LOGIC & SIMULATION ---
         atk_active = SkillHandler.get_active_skills(attacker_team, context='b')
@@ -171,7 +171,7 @@ class Battle(commands.Cog):
         embed.set_footer(text=f"Win Probability: {chance:.1f}%")
 
         await loading_msg.delete()
-        await ctx.send(file=discord.File(fp=img_bytes, filename="battle.png"), embed=embed)
+        await ctx.reply(file=discord.File(fp=img_bytes, filename="battle.png"), embed=embed)
 
 async def setup(bot):
     await bot.add_cog(Battle(bot))
