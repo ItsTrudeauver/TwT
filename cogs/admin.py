@@ -64,6 +64,7 @@ class Admin(commands.Cog):
         else:
             await ctx.reply("❌ Use `gems` or `char`.")
 
+
     @commands.command(name="configure_bot_team", aliases=["cbt"])
     @commands.has_permissions(administrator=True)
     async def configure_bot_team(self, ctx, *ids: int):
@@ -78,12 +79,15 @@ class Admin(commands.Cog):
         
         pool = await get_db_pool()
         async with pool.acquire() as conn:
+            # FIX 2: Ensure Bot exists in 'users' table to prevent Foreign Key Error
+            await conn.execute("INSERT INTO users (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING", bot_id)
+
             # 1. Update Inventory: Force Bot to own these units with Dupe Level 10
             for char_id in ids:
-                # We upsert: If exists, set dupe to 10. If not, insert with dupe 10.
+                # FIX 1: Removed 'level' and 'xp' columns
                 await conn.execute("""
-                    INSERT INTO inventory (user_id, anilist_id, level, xp, dupe_level)
-                    VALUES ($1, $2, 1, 0, 10)
+                    INSERT INTO inventory (user_id, anilist_id, dupe_level)
+                    VALUES ($1, $2, 10)
                     ON CONFLICT (user_id, anilist_id) 
                     DO UPDATE SET dupe_level = 10
                 """, bot_id, char_id)
