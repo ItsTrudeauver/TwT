@@ -22,15 +22,12 @@ class Battle(commands.Cog):
             slot_ids = [v for v in team_row.values() if v is not None]
             if not slot_ids: return []
 
-            # UPDATED SQL: Calculates boosted power based on i.dupe_level
-            # ... inside get_team_for_battle method ...
-
-            # UPDATED SQL: Use COALESCE to handle NULL dupe_levels safely
+            # UPDATED SQL: Added ::int cast to prevent returning Decimal type
             chars = await conn.fetch("""
                 SELECT 
                     i.id, 
                     c.name, 
-                    FLOOR(c.true_power * (1 + (COALESCE(i.dupe_level, 0) * 0.05))) as true_power, 
+                    FLOOR(c.true_power * (1 + (COALESCE(i.dupe_level, 0) * 0.05)))::int as true_power, 
                     c.ability_tags, 
                     c.rarity, 
                     c.rank, 
@@ -40,7 +37,7 @@ class Battle(commands.Cog):
                 WHERE i.id = ANY($1)
             """, slot_ids)
             return [dict(c) for c in chars]
-
+        
     def generate_npc_team(self, difficulty):
         team = []
         rules = {
