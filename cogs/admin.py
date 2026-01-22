@@ -67,46 +67,58 @@ class Admin(commands.Cog):
 
     @commands.command(name="configure_bot_team", aliases=["cbt"])
     @commands.has_permissions(administrator=True)
-    async def configure_bot_team(self, ctx, *ids: int):
+
+    @commands.command(name="configure_bot_team", aliases=["cbt"])
+    @commands.has_permissions(administrator=True)
+    async def configure_bot_team(self, ctx, *anilist_ids: int):
         """
         (Hidden) Sets the Bot's Defense Team with MAX DUPES (10).
-        Usage: !cbt 101 102 103 104 105
+        Usage: !cbt [AniListID1] [AniListID2] ...
         """
-        if len(ids) > 5:
+        if len(anilist_ids) > 5:
             return await ctx.reply("❌ Max 5 units.")
         
         bot_id = str(self.bot.user.id)
+        inventory_ids = []
         
         pool = await get_db_pool()
         async with pool.acquire() as conn:
-            # FIX 2: Ensure Bot exists in 'users' table to prevent Foreign Key Error
+            # 1. Ensure Bot exists in 'users' table to prevent Foreign Key errors
             await conn.execute("INSERT INTO users (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING", bot_id)
 
-            # 1. Update Inventory: Force Bot to own these units with Dupe Level 10
-            for char_id in ids:
-                # FIX 1: Removed 'level' and 'xp' columns
-                await conn.execute("""
+            # 2. Update Inventory & Collect the specific Inventory IDs
+            for aid in anilist_ids:
+                # We use RETURNING id to get the unique inventory ID representing this unit
+                row = await conn.fetchrow("""
                     INSERT INTO inventory (user_id, anilist_id, dupe_level)
                     VALUES ($1, $2, 10)
                     ON CONFLICT (user_id, anilist_id) 
                     DO UPDATE SET dupe_level = 10
-                """, bot_id, char_id)
+                    RETURNING id
+                """, bot_id, aid)
+                
+                # Capture the ID
+                if row:
+                    inventory_ids.append(row['id'])
 
-            # 2. Update Teams Table
+            # Fill remaining slots with None if less than 5 units provided
+            slots = inventory_ids + [None] * (5 - len(inventory_ids))
+
+            # 3. Update Teams Table using INVENTORY IDs (not AniList IDs)
             await conn.execute("""
                 INSERT INTO teams (user_id, slot_1, slot_2, slot_3, slot_4, slot_5)
                 VALUES ($1, $2, $3, $4, $5, $6)
                 ON CONFLICT (user_id) DO UPDATE 
                 SET slot_1=$2, slot_2=$3, slot_3=$4, slot_4=$5, slot_5=$6
-            """, bot_id, 
-            ids[0] if len(ids) > 0 else None,
-            ids[1] if len(ids) > 1 else None,
-            ids[2] if len(ids) > 2 else None,
-            ids[3] if len(ids) > 3 else None,
-            ids[4] if len(ids) > 4 else None)
+            """, bot_id, slots[0], slots[1], slots[2], slots[3], slots[4])
         
-        await ctx.reply(f"🤖 **BOSS ACTIVATED:** Bot Team Updated.\nUNITS: {ids}\nSTATS: **Dupe Level 10 (MAX)** applied.")
-
+        await ctx.reply(
+            f"🤖 **BOSS ACTIVATED:** Bot Team Updated.\n"
+            f"**Units (AniList IDs):** {anilist_ids}\n"
+            f"**Team Slots (Inv IDs):** {inventory_ids}\n"
+            f"**Stats:** Dupe Level 10 (MAX) applied."
+        )
+    
     @commands.command(name="give")
     @commands.has_permissions(administrator=True)
     async def give(self, ctx, category: str, user: discord.User, amount_or_id: int):
