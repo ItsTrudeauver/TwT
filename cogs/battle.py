@@ -3,6 +3,7 @@ from discord.ext import commands
 import random
 import asyncio
 import typing
+import datetime
 from core.database import get_db_pool, get_user
 from core.game_math import simulate_standoff, calculate_effective_power
 from core.skill_handlers import SkillHandler
@@ -13,7 +14,7 @@ class Battle(commands.Cog):
         self.bot = bot
 
     async def get_team_for_battle(self, user_id):
-        """Fetches a user's battle team with full stats including duplicate boosts."""
+        """Fetches a user's battle team with full stats including duplicate bonuses."""
         pool = await get_db_pool()
         async with pool.acquire() as conn:
             team_row = await conn.fetchrow("SELECT slot_1, slot_2, slot_3, slot_4, slot_5 FROM teams WHERE user_id = $1", str(user_id))
@@ -22,15 +23,14 @@ class Battle(commands.Cog):
             slot_ids = [v for v in team_row.values() if v is not None]
             if not slot_ids: return []
 
-            # Added ::int cast to prevent returning Decimal type
             chars = await conn.fetch("""
                 SELECT 
                     i.id, 
                     c.name, 
                     FLOOR(
                         c.true_power 
-                        * (1 + (COALESCE(i.dupe_level, 0) * 0.05))   -- Dupe Bonus
-                        * (1 + (COALESCE(u.team_level, 1) * 0.01))   -- Team Level Bonus
+                        * (1 + (COALESCE(i.dupe_level, 0) * 0.05)) 
+                        * (1 + (COALESCE(u.team_level, 1) * 0.01))
                     )::int as true_power, 
                     c.ability_tags, 
                     c.rarity, 
@@ -38,7 +38,7 @@ class Battle(commands.Cog):
                     c.image_url
                 FROM inventory i
                 JOIN characters_cache c ON i.anilist_id = c.anilist_id
-                JOIN users u ON i.user_id = u.user_id 
+                LEFT JOIN users u ON i.user_id = u.user_id 
                 WHERE i.id = ANY($1)
             """, slot_ids)
             return [dict(c) for c in chars]
@@ -77,7 +77,7 @@ class Battle(commands.Cog):
         attacker_team = await self.get_team_for_battle(user_id)
         
         if not attacker_team:
-            return await ctx.reply("❌ Your battle team is empty! Use `!set_team_battle <id1> <id2> ... <id5>` first. Check your unit id (not to be confused with anilist id) with !inv")
+            return await ctx.reply("❌ Your battle team is empty! Use `!stb` to set it up.")
 
         opponent = None
         difficulty = None
@@ -104,17 +104,15 @@ class Battle(commands.Cog):
             if not defender_team: return await ctx.reply("❌ Invalid difficulty.")
             defender_name = f"{difficulty.capitalize()} NPC"
 
-        # Notify Start
         loading_msg = await ctx.reply(f"⚔️ **Generating Battle: {ctx.author.display_name} vs {defender_name}...**")
 
-        # --- LOGIC & SIMULATION ---
+        # --- COMBAT LOGIC ---
         atk_active = SkillHandler.get_active_skills(attacker_team, context='b')
         def_active = SkillHandler.get_active_skills(defender_team, context='b')
         atk_ignore = SkillHandler.handle_kamikaze(defender_team, atk_active)
         def_ignore = SkillHandler.handle_kamikaze(attacker_team, def_active)
 
-        # 1. Apply Individual Skills + Individual Variance (0.9 - 1.1)
-        # Variance is applied HERE so it averages out across 5 units
+        # 1. Apply Individual Skills + Variance (0.9 - 1.1)
         atk_power = sum(
             (SkillHandler.apply_individual_battle_skills(c['true_power'], c) * random.uniform(0.9, 1.1))
             for i, c in enumerate(attacker_team) if i not in def_ignore
@@ -125,11 +123,11 @@ class Battle(commands.Cog):
             for i, c in enumerate(defender_team) if i not in atk_ignore
         )
 
-        # 2. Apply Team-Wide Modifiers to the Sum
+        # 2. Apply Team-Wide Modifiers
         atk_final = SkillHandler.apply_team_battle_mods(atk_power, def_active)
         def_final = SkillHandler.apply_team_battle_mods(def_power, atk_active)
 
-        # 3. Deterministic Winner
+        # 3. Determine Winner
         if atk_final > def_final:
             winner_label = "Player A"
         elif def_final > atk_final:
@@ -137,15 +135,39 @@ class Battle(commands.Cog):
         else:
             winner_label = "Draw"
 
-        # 4. Handle skill-based revives or overrides
+        # 4. Handle Revives
         final_result = SkillHandler.handle_revive(winner_label == "Player A", atk_active)
-
+        
         # 0 = Draw, 1 = Player Wins, 2 = Player Loses
         win_code = 1 if final_result == "WIN" else (2 if final_result == "LOSS" else 0)
 
-        # Calculate 'chance' for the UI footer
         total_final = atk_final + def_final
         chance = (atk_final / total_final * 100) if total_final > 0 else 50.0
+
+        # --- BOSS REWARD LOGIC ---
+        achievement_msg = ""
+        # Check if fighting BOT and WON
+        if mode == "pvp" and opponent.id == self.bot.user.id and win_code == 1:
+            achieve_id = "infinite_possibilities"
+            pool = await get_db_pool()
+            
+            async with pool.acquire() as conn:
+                # Check for existing achievement
+                row = await conn.fetchrow(
+                    "SELECT 1 FROM achievements WHERE user_id = $1 AND achievement_id = $2", 
+                    user_id, achieve_id
+                )
+                
+                if not row:
+                    reward_gems = 10000
+                    await conn.execute("INSERT INTO achievements (user_id, achievement_id, earned_at) VALUES ($1, $2, $3)", user_id, achieve_id, datetime.datetime.utcnow().strftime("%Y-%m-%d"))
+                    await conn.execute("UPDATE users SET gacha_gems = gacha_gems + $1 WHERE user_id = $2", reward_gems, user_id)
+                    
+                    achievement_msg = (
+                        f"\n\n🏆 **ACHIEVEMENT UNLOCKED: Infinite Possibilities**\n"
+                        f"You defeated the System Administrator.\n"
+                        f"💎 **Reward:** {reward_gems:,} Gems"
+                    )
 
         # --- DB UPDATE ---
         pool = await get_db_pool()
@@ -156,7 +178,7 @@ class Battle(commands.Cog):
             ON CONFLICT (user_id, task_key) DO UPDATE SET progress = daily_tasks.progress + 1
         """, user_id, task_key)
 
-        # --- IMAGE GENERATION ---
+        # --- IMAGE GEN ---
         img_bytes = await generate_battle_image(
             attacker_team, 
             defender_team, 
@@ -165,12 +187,15 @@ class Battle(commands.Cog):
             winner_idx=win_code
         )
 
-        # --- EMBED ---
         color = 0x00ff00 if final_result == "WIN" else (0xff0000 if final_result == "LOSS" else 0xffff00)
         embed = discord.Embed(title="Combat Result", color=color)
         embed.add_field(name=f"{ctx.author.display_name} {'👑' if win_code==1 else ''}", value=f"Power: **{int(atk_final):,}**", inline=True)
         embed.add_field(name=f"{defender_name} {'👑' if win_code==2 else ''}", value=f"Power: **{int(def_final):,}**", inline=True)
         
+        if achievement_msg:
+            embed.description = achievement_msg
+            embed.color = discord.Color.purple()
+
         embed.set_image(url="attachment://battle.png")
         embed.set_footer(text=f"Win Probability: {chance:.1f}%")
 

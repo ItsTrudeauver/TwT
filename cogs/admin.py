@@ -20,6 +20,88 @@ from core.database import get_db_pool
 class Admin(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+    import discord
+from discord.ext import commands
+from core.database import get_db_pool
+
+class Admin(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+
+    @commands.command(name="give")
+    @commands.has_permissions(administrator=True)
+    async def give(self, ctx, category: str, user: discord.User, amount_or_id: int):
+        """Admin command to give resources."""
+        pool = await get_db_pool()
+        
+        if category.lower() in ["gems", "gem", "money"]:
+            async with pool.acquire() as conn:
+                await conn.execute("INSERT INTO users (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING", str(user.id))
+                await conn.execute("UPDATE users SET gacha_gems = gacha_gems + $1 WHERE user_id = $2", amount_or_id, str(user.id))
+            await ctx.reply(f"✅ **Admin Action:** Gave **{amount_or_id:,} Gems** to {user.mention}!")
+
+        elif category.lower() in ["char", "character", "unit"]:
+            char_id = amount_or_id
+            async with pool.acquire() as conn:
+                char_info = await conn.fetchrow("SELECT name FROM characters_cache WHERE anilist_id = $1", char_id)
+                char_name = char_info['name'] if char_info else f"ID {char_id}"
+
+                existing = await conn.fetchrow(
+                    "SELECT id, dupe_level FROM inventory WHERE user_id = $1 AND anilist_id = $2", 
+                    str(user.id), char_id
+                )
+                
+                if existing:
+                    new_dupe = existing['dupe_level'] + 1
+                    await conn.execute("UPDATE inventory SET dupe_level = $1 WHERE id = $2", new_dupe, existing['id'])
+                    await ctx.reply(f"✅ **Admin Action:** {user.mention} already owned **{char_name}**. Upgraded to **Dupe Lv {new_dupe}**.")
+                else:
+                    await conn.execute(
+                        "INSERT INTO inventory (user_id, anilist_id, level, xp) VALUES ($1, $2, 1, 0)",
+                        str(user.id), char_id
+                    )
+                    await ctx.reply(f"✅ **Admin Action:** Added **{char_name}** to {user.mention}'s inventory.")
+        else:
+            await ctx.reply("❌ Use `gems` or `char`.")
+
+    @commands.command(name="configure_bot_team", aliases=["cbt"])
+    @commands.has_permissions(administrator=True)
+    async def configure_bot_team(self, ctx, *ids: int):
+        """
+        (Hidden) Sets the Bot's Defense Team with MAX DUPES (10).
+        Usage: !cbt 101 102 103 104 105
+        """
+        if len(ids) > 5:
+            return await ctx.reply("❌ Max 5 units.")
+        
+        bot_id = str(self.bot.user.id)
+        
+        pool = await get_db_pool()
+        async with pool.acquire() as conn:
+            # 1. Update Inventory: Force Bot to own these units with Dupe Level 10
+            for char_id in ids:
+                # We upsert: If exists, set dupe to 10. If not, insert with dupe 10.
+                await conn.execute("""
+                    INSERT INTO inventory (user_id, anilist_id, level, xp, dupe_level)
+                    VALUES ($1, $2, 1, 0, 10)
+                    ON CONFLICT (user_id, anilist_id) 
+                    DO UPDATE SET dupe_level = 10
+                """, bot_id, char_id)
+
+            # 2. Update Teams Table
+            await conn.execute("""
+                INSERT INTO teams (user_id, slot_1, slot_2, slot_3, slot_4, slot_5)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                ON CONFLICT (user_id) DO UPDATE 
+                SET slot_1=$2, slot_2=$3, slot_3=$4, slot_4=$5, slot_5=$6
+            """, bot_id, 
+            ids[0] if len(ids) > 0 else None,
+            ids[1] if len(ids) > 1 else None,
+            ids[2] if len(ids) > 2 else None,
+            ids[3] if len(ids) > 3 else None,
+            ids[4] if len(ids) > 4 else None)
+        
+        await ctx.reply(f"🤖 **BOSS ACTIVATED:** Bot Team Updated.\nUNITS: {ids}\nSTATS: **Dupe Level 10 (MAX)** applied.")
 
     @commands.command(name="give")
     @commands.has_permissions(administrator=True)

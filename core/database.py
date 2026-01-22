@@ -19,6 +19,16 @@ async def get_db_pool():
 async def init_db():
     pool = await get_db_pool()
     async with pool.acquire() as conn:
+        
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS achievements (
+                user_id TEXT,
+                achievement_id TEXT,
+                earned_at TEXT,
+                PRIMARY KEY (user_id, achievement_id)
+            );
+        """)
+        
         # USERS: Gems, Pity, Starter Flag, Daily Boat Pulls
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS banners (
