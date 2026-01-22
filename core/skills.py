@@ -106,9 +106,13 @@ SKILL_DATA = {
     }
 }
 def get_skill_info(skill_name):
-    """Returns skill metadata if it exists."""
-    return SKILL_DATA.get(skill_name.title())
-
+    """Returns skill metadata with a case-insensitive lookup."""
+    # Search through keys case-insensitively
+    target = skill_name.strip().lower()
+    for key in SKILL_DATA:
+        if key.lower() == target:
+            return SKILL_DATA[key]
+    return None
 def list_all_skills():
     """Returns a list of all valid skill names."""
     return list(SKILL_DATA.keys())

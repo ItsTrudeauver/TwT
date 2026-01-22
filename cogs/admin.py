@@ -122,46 +122,66 @@ class Admin(commands.Cog):
     @commands.command(name="add_skill")
     @commands.is_owner()
     async def add_skill(self, ctx, anilist_id: int, *, skill_name: str):
-        skill = get_skill_info(skill_name)
-        if not skill:
-            await ctx.reply(f"❌ Invalid skill. Choose from: `{', '.join(list_all_skills())}`")
-            return
+        """
+        Adds a skill to a character by ID. 
+        Matches skill names case-insensitively to support multi-word skills.
+        """
+        # 1. Case-insensitive lookup to find the correct skill key (e.g., "Queen of the Zodiacs")
+        # We search through all available skills to find a match, regardless of user's casing.
+        all_skills = list_all_skills()
+        target_skill_key = next((s for s in all_skills if s.lower() == skill_name.strip().lower()), None)
+        
+        if not target_skill_key:
+            return await ctx.reply(f"❌ Invalid skill. Choose from: `{', '.join(all_skills)}`")
 
+        # Get the skill metadata using the correct key
+        skill = get_skill_info(target_skill_key)
         pool = await get_db_pool()
+        
         async with pool.acquire() as conn:
+            # 2. Check if the character exists in the cache
             char = await conn.fetchrow("SELECT name, ability_tags FROM characters_cache WHERE anilist_id = $1", anilist_id)
             
             if not char:
                 gacha_cog = self.bot.get_cog("Gacha")
-                if not gacha_cog: return await ctx.reply("❌ Gacha system is offline.")
+                if not gacha_cog: 
+                    return await ctx.reply("❌ Gacha system is offline.")
 
                 loading = await ctx.reply(f"🔍 ID `{anilist_id}` not in cache. Fetching from AniList...")
                 async with aiohttp.ClientSession() as session:
-                    # Default fetch without forced rarity
                     api_data = await gacha_cog.fetch_character_by_id(session, anilist_id)
                 
-                if not api_data: return await loading.edit(content="❌ Could not find that character or AniList is down.")
+                if not api_data: 
+                    return await loading.edit(content="❌ Could not find that character or AniList is down.")
                 
                 await batch_cache_characters([api_data])
                 await loading.delete()
                 char = await conn.fetchrow("SELECT name, ability_tags FROM characters_cache WHERE anilist_id = $1", anilist_id)
 
+            # 3. Handle skill tags and duplicates
             current_tags = json.loads(char['ability_tags'])
-            target_skill = skill_name.title()
 
-            if target_skill in current_tags:
-                return await ctx.reply(f"⚠️ **{char['name']}** already has the **{target_skill}** skill.")
+            if target_skill_key in current_tags:
+                return await ctx.reply(f"⚠️ **{char['name']}** already has the **{target_skill_key}** skill.")
 
-            current_tags.append(target_skill)
+            current_tags.append(target_skill_key)
             
-            if target_skill == "Anchor":
-                await conn.execute("UPDATE characters_cache SET ability_tags=$1, squash_resistance=$2 WHERE anilist_id=$3", 
-                                 json.dumps(current_tags), skill['value'], anilist_id)
+            # 4. Database update (Handling unique skill effects like Anchor)
+            if target_skill_key == "Anchor":
+                # Anchor updates both tags and squash_resistance value
+                await conn.execute("""
+                    UPDATE characters_cache 
+                    SET ability_tags = $1, squash_resistance = $2 
+                    WHERE anilist_id = $3
+                """, json.dumps(current_tags), skill['value'], anilist_id)
             else:
-                await conn.execute("UPDATE characters_cache SET ability_tags=$1 WHERE anilist_id=$2", 
-                                 json.dumps(current_tags), anilist_id)
+                await conn.execute("""
+                    UPDATE characters_cache 
+                    SET ability_tags = $1 
+                    WHERE anilist_id = $2
+                """, json.dumps(current_tags), anilist_id)
 
-            await ctx.reply(f"✅ Added **{target_skill}** to **{char['name']}**!")
+            await ctx.reply(f"✅ Added **{target_skill_key}** to **{char['name']}**!")
 
     @commands.command(name="set_banner")
     @commands.is_owner()
