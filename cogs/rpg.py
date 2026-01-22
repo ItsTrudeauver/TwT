@@ -29,16 +29,23 @@ class RPG(commands.Cog):
                     continue
                 
                 # UPDATED: This query now pulls dupe_level from inventory to calculate boosted power
+                #
+                # UPDATED SQL
                 char_data = await conn.fetchrow("""
                     SELECT 
                         c.name, 
                         c.image_url, 
-                        FLOOR(c.true_power * (1 + (i.dupe_level * 0.05))) as true_power, 
+                        FLOOR(
+                            c.true_power 
+                            * (1 + (i.dupe_level * 0.05)) 
+                            * (1 + (u.team_level * 0.01)) -- Team Level Bonus
+                        )::int as true_power, 
                         c.rarity, 
                         c.rarity_override, 
                         c.ability_tags 
                     FROM inventory i
                     JOIN characters_cache c ON i.anilist_id = c.anilist_id
+                    JOIN users u ON i.user_id = u.user_id
                     WHERE i.id = $1
                 """, char_id)
                 

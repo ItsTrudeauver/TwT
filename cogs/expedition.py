@@ -10,6 +10,14 @@ class Expedition(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
+    def _get_next_level_req(self, level):
+        """
+        Calculates XP needed for the next level.
+        Formula: Level^2 * 100
+        Ex: Lvl 1->2 needs 100 XP. Lvl 10->11 needs 10,000 XP.
+        """
+        return (level ** 2) * 100
+
     async def get_expedition_data(self, user_id):
         """Fetches the user's current expedition squad and timing info."""
         pool = await get_db_pool()
@@ -95,22 +103,18 @@ class Expedition(commands.Cog):
             """, user_id)
             all_inventory = [dict(r) for r in all_inventory_rows]
 
-            # 3. Calculate Base Yield
+            # 3. Calculate Base Yield (Gems)
             base_gems = Economy.calculate_expedition_yield(total_power, duration_seconds)
             
             # 4. Apply Multipliers from Skills
-            # Get active skills for context 'e' (team) and 'g' (global)
             team_skills = SkillHandler.get_active_skills(team_chars, context='e')
             global_skills = SkillHandler.get_active_skills(all_inventory, context='g')
 
-            # Combine multipliers
             multiplier = 1.0
             if "Hardworker" in team_skills:
                 multiplier += (0.15 * team_skills["Hardworker"])
             if "Master of Coin" in global_skills:
                 multiplier += (0.10 * global_skills["Master of Coin"])
-            
-            # "The Long Road" Logic
             if "The Long Road" in team_skills:
                 duration_hours = min(duration_seconds / 3600, 24)
                 long_road_bonus = 0.24 * (duration_hours / 24)
@@ -118,15 +122,58 @@ class Expedition(commands.Cog):
 
             final_gems = int(base_gems * multiplier)
 
-            # 5. Distribute Rewards and Reset
+            # --- NEW: LEVELING LOGIC START ---
+            
+            # A. Calculate XP (1 XP per minute)
+            xp_gained = int(duration_seconds / 60)
+            
+            # B. Fetch Current Level & XP
+            user_row = await pool.fetchrow("SELECT team_level, team_xp FROM users WHERE user_id = $1", user_id)
+            cur_lvl = user_row['team_level'] if user_row and user_row['team_level'] else 1
+            cur_xp = user_row['team_xp'] if user_row and user_row['team_xp'] else 0
+            
+            # C. Process Level Ups
+            cur_xp += xp_gained
+            leveled_up = False
+            levels_gained = 0
+            
+            while True:
+                req_xp = self._get_next_level_req(cur_lvl)
+                if cur_xp >= req_xp:
+                    cur_xp -= req_xp
+                    cur_lvl += 1
+                    leveled_up = True
+                    levels_gained += 1
+                else:
+                    break
+            
+            # --- LEVELING LOGIC END ---
+
+            # 5. Distribute Rewards (Gems + XP + Level) and Reset
             await pool.execute("""
-                UPDATE users SET gacha_gems = gacha_gems + $1 WHERE user_id = $2
-            """, final_gems, user_id)
+                UPDATE users 
+                SET gacha_gems = gacha_gems + $1, 
+                    team_level = $2, 
+                    team_xp = $3
+                WHERE user_id = $4
+            """, final_gems, cur_lvl, cur_xp, user_id)
+            
             await pool.execute("""
                 UPDATE expeditions SET start_time = NULL, last_claim = $1 WHERE user_id = $2
             """, now, user_id)
 
-            await ctx.send(f"💰 **Expedition Complete!**\nEarned: **{final_gems:,} Gems**\nMultipliers: `{multiplier:.2f}x` (Power: {total_power:,})")
+            # 6. Build Message
+            msg = f"💰 **Expedition Complete!**\nEarned: **{final_gems:,} Gems**\n✨ **Team XP:** +{xp_gained}"
+            
+            if leveled_up:
+                msg += f"\n\n🎉 **LEVEL UP!**\nYou reached **Team Level {cur_lvl}**!\n⚡ All units gained **+{levels_gained}% Power** (Total: +{cur_lvl}%)"
+            else:
+                req_next = self._get_next_level_req(cur_lvl)
+                msg += f"\n📊 Progress: `{cur_xp}/{req_next} XP` to Level {cur_lvl + 1}"
+
+            msg += f"\nMultipliers: `{multiplier:.2f}x`"
+            
+            await ctx.send(msg)
 
         else: # Default: Status
             if not data['start_time']:

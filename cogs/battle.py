@@ -23,19 +23,27 @@ class Battle(commands.Cog):
             if not slot_ids: return []
 
             # UPDATED SQL: Added ::int cast to prevent returning Decimal type
+#
+            # UPDATED SQL: Joins 'users' table and applies multiplier
             chars = await conn.fetch("""
                 SELECT 
                     i.id, 
                     c.name, 
-                    FLOOR(c.true_power * (1 + (COALESCE(i.dupe_level, 0) * 0.05)))::int as true_power, 
+                    FLOOR(
+                        c.true_power 
+                        * (1 + (COALESCE(i.dupe_level, 0) * 0.05))   -- Dupe Bonus (5%)
+                        * (1 + (COALESCE(u.team_level, 1) * 0.01))   -- Team Level Bonus (1%)
+                    )::int as true_power, 
                     c.ability_tags, 
                     c.rarity, 
                     c.rank, 
                     c.image_url
                 FROM inventory i
                 JOIN characters_cache c ON i.anilist_id = c.anilist_id
+                JOIN users u ON i.user_id = u.user_id -- Connect to Users table
                 WHERE i.id = ANY($1)
             """, slot_ids)
+            
             return [dict(c) for c in chars]
         
     def generate_npc_team(self, difficulty):
@@ -46,7 +54,8 @@ class Battle(commands.Cog):
             "hard":      [("SR", 251, 1500)] * 5,
             "expert":    [("SSR", 1, 250)] * 2 + [("SR", 251, 1500)] * 2 + [("R", 1501, 10000)] * 1,
             "nightmare": [("SSR", 1, 250)] * 3 + [("SR", 251, 1500)] * 2,
-            "hell":      [("SSR", 1, 50)] * 2 + [("SSR", 1, 250)] * 3
+            "hell":      [("SSR", 1, 10)] * 2 + [("SSR", 11, 250)] * 3,
+            "conqueror": [("SSR"), 1, 10] * 5
         }
         
         setup = rules.get(difficulty.lower())

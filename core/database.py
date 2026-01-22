@@ -46,8 +46,8 @@ async def init_db():
             )
         """)
 
-        # --- MIGRATION GUARDS ---
-        # These ensure existing databases get the new columns without crashing
+        await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS team_level INTEGER DEFAULT 1;")
+        await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS team_xp INTEGER DEFAULT 0;")
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_boat_pulls INTEGER DEFAULT 0;")
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_boat_pull_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;")
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS boat_credits_spent BIGINT DEFAULT 0;")
