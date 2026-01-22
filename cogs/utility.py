@@ -39,41 +39,30 @@ class Utility(commands.Cog):
     @commands.command(name="whohas", aliases=["usersof", "skillsearch"])
     async def who_has_skill(self, ctx, *, skill_name: str):
         """
-        Finds all characters that possess a specific skill.
+        Finds all characters that possess a specific skill (Case-Insensitive).
         Usage: !whohas Lucky 7
         """
-        # 1. Clean input (Title Case helps with matching if your DB is consistent)
-        # However, it's safer to rely on exact match or ILIKE. 
-        # Since ability_tags is JSONB, case sensitivity matters.
-        # We will try exact match first.
-        
         target_skill = skill_name.strip()
-        
         pool = await get_db_pool()
+        
         async with pool.acquire() as conn:
-            # PostgreSQL Operator '?' checks if a string exists in a JSONB array
+            # We cast to ::jsonb to ensure compatibility, then expand elements and check lowercase
             rows = await conn.fetch("""
                 SELECT name, rarity, ability_tags 
                 FROM characters_cache 
-                WHERE ability_tags ? $1
+                WHERE EXISTS (
+                    SELECT 1 
+                    FROM jsonb_array_elements_text(ability_tags::jsonb) as tag 
+                    WHERE LOWER(tag) = LOWER($1)
+                )
             """, target_skill)
-            
-            # If exact match fails, try a broader search (slower but helpful)
-            # This fetches ALL chars and checks in python (fallback for case-insensitivity)
-            if not rows:
-                all_chars = await conn.fetch("SELECT name, rarity, ability_tags FROM characters_cache")
-                rows = [
-                    row for row in all_chars 
-                    if any(s.lower() == target_skill.lower() for s in (row['ability_tags'] or []))
-                ]
 
         if not rows:
             return await ctx.reply(f"🤷 **No known characters** possess the skill `{target_skill}`.")
 
-        # 2. Format Output
+        # Format Output
         msg = f"🔍 **Characters with '{target_skill}':**\n"
         
-        # Limit list length to avoid Discord 2000 char limit
         lines = []
         for row in rows:
             lines.append(f"• **{row['name']}** ({row['rarity']})")
