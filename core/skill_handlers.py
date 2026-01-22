@@ -4,13 +4,14 @@ from core.skills import SKILL_DATA
 
 class SkillHandler:
     @staticmethod
-    def get_active_skills(character_list, context='b'):
+    def get_active_skills(character_list, context='b', suppressed_skills=None):
         """
         Filters a list of characters to find active skills based on context (b/e/g).
         Returns: { "SkillName": count }
         """
         active_effects = {}
         seen_non_overlap = set()
+        suppressed = suppressed_skills or []
 
         for char in character_list:
             if not char: continue
@@ -23,6 +24,7 @@ class SkillHandler:
                     tags = []
 
             for skill_name in tags:
+                if skill_name in suppressed: continue # PIG EFFECT CHECK
                 config = SKILL_DATA.get(skill_name)
                 if not config or (config['applies_in'] not in [context, 'g']):
                     continue
@@ -124,7 +126,7 @@ class SkillHandler:
         return effect, log
 
     @staticmethod
-    def apply_individual_battle_skills(base_power, char):
+    def apply_individual_battle_skills(base_power, char, suppressed_skills=None):
         """
         Calculates individual power modifiers and generates logs.
         Returns: (modified_power, list_of_log_strings)
@@ -138,9 +140,9 @@ class SkillHandler:
         
         modified_power = base_power
         logs = []
+        suppressed = suppressed_skills or []
 
-        if "Lucky 7" in tags:
-            
+        if "Lucky 7" in tags and "Lucky 7" not in suppressed:
             if random.random() < 0.77:
                 modified_power += 7777
                 logs.append(f"🍀 **{char['name']}** gained a Lucky 7 flat bonus (+7,777)!")
@@ -148,24 +150,24 @@ class SkillHandler:
                 modified_power *= 8.77
                 logs.append(f"✨ **{char['name']}** hit the Lucky 7 Jackpot (+777% Power)!")
 
-        if "Surge" in tags:
+        if "Surge" in tags and "Surge" not in suppressed:
             mult = SKILL_DATA["Surge"]["value"]
             modified_power *= (1 + mult)
             logs.append(f"⚡ **{char['name']}** activated **Surge** (+{int(mult*100)}%)!")
 
-        if "Golden Egg" in tags:
+        if "Golden Egg" in tags and "Golden Egg" not in suppressed:
             if random.random() < 0.01:
                 mult = SKILL_DATA["Golden Egg"]["value"]
                 modified_power *= mult
                 logs.append(f"🥚 **{char['name']}** hatched a **Golden Egg** ({mult}x Power)!")
 
-        if "Berserk" in tags:
+        if "Berserk" in tags and "Berserk" not in suppressed:
             if random.random() < 0.25:
                 mult = SKILL_DATA["Berserk"]["value"]
                 modified_power *= (1 + mult)
                 logs.append(f"💢 **{char['name']}** went **Berserk** (+{int(mult*100)}%)!")
 
-        if "The Joker" in tags:
+        if "The Joker" in tags and "The Joker" not in suppressed:
             val = SKILL_DATA["The Joker"]["value"]
             if random.random() < 0.5:
                 modified_power *= (1 + val)
@@ -177,15 +179,16 @@ class SkillHandler:
         return modified_power, logs
 
     @staticmethod
-    def apply_team_battle_mods(team_power, enemy_active_skills):
+    def apply_team_battle_mods(team_power, enemy_active_skills, suppressed_skills=None):
         """
         Calculates team-wide power modifiers (like debuffs from the enemy).
         Returns: (final_power, list_of_log_strings)
         """
         final_power = team_power
         logs = []
+        suppressed = suppressed_skills or []
 
-        if "Guard" in enemy_active_skills:
+        if "Guard" in enemy_active_skills and "Guard" not in suppressed:
             val = SKILL_DATA["Guard"]["value"]
             final_power *= (1 - val)
             logs.append(f"🛡️ Enemy **Guard** reduced total power by {int(val*100)}%!")

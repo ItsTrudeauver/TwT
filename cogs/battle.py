@@ -96,48 +96,71 @@ class Battle(commands.Cog):
         loading_msg = await ctx.reply("⚔️ **The battle is commencing...**")
 
         # --- INITIALIZATION ---
-        # Collect logs per character slot to ensure visual order matches slot order
         atk_slot_logs = {i: [] for i in range(len(attacker_team))}
         def_slot_logs = {i: [] for i in range(len(defender_team))}
-        atk_misc_logs, def_misc_logs = [], [] # For team-wide effects like Kamikaze
-        
-        atk_active_skills = SkillHandler.get_active_skills(attacker_team)
-        def_active_skills = SkillHandler.get_active_skills(defender_team)
+        atk_misc_logs, def_misc_logs = [], [] 
 
-        # 1. Handle Pre-Battle (Zodiac Rolls)
-        def pre_battle_phase(team, opp_team, slot_logs, active_skills):
+        # 1. ZODIAC ROLLS FIRST (No matter what)
+        def pre_battle_phase(team, opp_team, slot_logs):
             zodiac_effects = []
             for i, char in enumerate(team):
                 tags = char.get('ability_tags', [])
                 if isinstance(tags, str): tags = json.loads(tags)
-                
                 if "Queen of the Zodiacs" in tags:
                     eff, log = SkillHandler.handle_zodiac_roll(char, team, opp_team)
                     zodiac_effects.append((i, eff))
                     slot_logs[i].append(log)
             return zodiac_effects
 
-        atk_z_effects = pre_battle_phase(attacker_team, defender_team, atk_slot_logs, atk_active_skills)
-        def_z_effects = pre_battle_phase(defender_team, attacker_team, def_slot_logs, def_active_skills)
+        atk_z_effects = pre_battle_phase(attacker_team, defender_team, atk_slot_logs)
+        def_z_effects = pre_battle_phase(defender_team, attacker_team, def_slot_logs)
 
-        # 2. Handle Kamikaze (Immediate removals)
+        # 2. PIG EFFECT LOGIC: Determine which skills are suppressed
+        def get_suppressed_skills(z_effects, own_team, opp_team, slot_logs):
+            suppressed = []
+            for idx, eff in z_effects:
+                if eff.get("disable_random_opp_skill"):
+                    # Find a skill to disable from the opponent
+                    potential_skills = set()
+                    for char in opp_team:
+                        tags = char.get('ability_tags', [])
+                        if isinstance(tags, str): tags = json.loads(tags)
+                        potential_skills.update(tags)
+                    
+                    # Remove self-meta skills or empty results
+                    potential_skills.discard("Queen of the Zodiacs")
+                    if potential_skills:
+                        target = random.choice(list(potential_skills))
+                        suppressed.append(target)
+                        # Update the generic Pig log with the specific skill name
+                        slot_logs[idx][-1] = f"👑 **{own_team[idx]['name']}** invoked the **Pig** Zodiac: Muddied the waters, disabling **{target}**!"
+            return suppressed
+
+        atk_suppressed = get_suppressed_skills(atk_z_effects, attacker_team, defender_team, atk_slot_logs)
+        def_suppressed = get_suppressed_skills(def_z_effects, defender_team, attacker_team, def_slot_logs)
+
+        # 3. GET ACTIVE SKILLS (Accounting for suppression)
+        atk_active_skills = SkillHandler.get_active_skills(attacker_team, suppressed_skills=def_suppressed)
+        def_active_skills = SkillHandler.get_active_skills(defender_team, suppressed_skills=atk_suppressed)
+
+        # 4. Handle Kamikaze
         atk_ignored, k_logs_a = SkillHandler.handle_kamikaze(defender_team, atk_active_skills)
         def_ignored, k_logs_d = SkillHandler.handle_kamikaze(attacker_team, def_active_skills)
         atk_misc_logs.extend(k_logs_a)
         def_misc_logs.extend(k_logs_d)
 
-        # 3. Final Power Calculation with Logic Overrides
-        def calculate_total_team_power(team, ignored, z_effects, opp_team, slot_logs, misc_logs, enemy_skills):
+        # 5. Final Power Calculation
+        def calculate_total_team_power(team, ignored, z_effects, opp_team, slot_logs, misc_logs, enemy_skills, own_suppressed, enemy_suppressed):
             team_multiplier = 1.0
             temp_powers = []
             
-            # Step A: Base Individual Calculations (Surge, Lucky 7, etc)
             for i, char in enumerate(team):
                 if i in ignored:
                     temp_powers.append(0)
                     continue
                 
-                p, logs = SkillHandler.apply_individual_battle_skills(char['true_power'], char)
+                # Apply suppression to individual skills
+                p, logs = SkillHandler.apply_individual_battle_skills(char['true_power'], char, suppressed_skills=own_suppressed)
                 slot_logs[i].extend(logs)
                 
                 variance = random.uniform(0.9, 1.1)
@@ -151,7 +174,7 @@ class Battle(commands.Cog):
                 
                 temp_powers.append(p * variance)
 
-            # Step B: Apply Logic Overrides (Monkey, Sheep, Dog)
+            # Logic Overrides
             for idx, eff in z_effects:
                 if eff.get("sheep_logic"):
                     opp_max = max([oc['true_power'] for oc in opp_team], default=0)
@@ -162,15 +185,15 @@ class Battle(commands.Cog):
                 if eff.get("dog_logic"):
                     temp_powers[idx] = max(temp_powers)
 
-            # Step C: Final Team Tally & Mods
             team_total = sum(temp_powers) * team_multiplier
-            final_total, team_mods = SkillHandler.apply_team_battle_mods(team_total, enemy_skills)
+            # Apply suppression to team-wide mods (like Guard)
+            final_total, team_mods = SkillHandler.apply_team_battle_mods(team_total, enemy_skills, suppressed_skills=enemy_suppressed)
             misc_logs.extend(team_mods)
             
             return final_total
 
-        final_atk_power = calculate_total_team_power(attacker_team, def_ignored, atk_z_effects, defender_team, atk_slot_logs, atk_misc_logs, def_active_skills)
-        final_def_power = calculate_total_team_power(defender_team, atk_ignored, def_z_effects, attacker_team, def_slot_logs, def_misc_logs, atk_active_skills)
+        final_atk_power = calculate_total_team_power(attacker_team, def_ignored, atk_z_effects, defender_team, atk_slot_logs, atk_misc_logs, def_active_skills, atk_suppressed, def_suppressed)
+        final_def_power = calculate_total_team_power(defender_team, atk_ignored, def_z_effects, attacker_team, def_slot_logs, def_misc_logs, atk_active_skills, def_suppressed, atk_suppressed)
 
         # Flatten logs: Slot 1 -> Slot 5 (Zodiac + Individual combined), then misc team effects
         atk_logs = [log for i in range(len(attacker_team)) for log in atk_slot_logs[i]] + atk_misc_logs
