@@ -70,13 +70,39 @@ def get_fitted_font(draw, text, max_width, font_path, max_font_size=40):
 
 def apply_holo_effect(img, rarity):
     if rarity == "R": return img
-    img = ImageEnhance.Color(img).enhance(1.3 if rarity == "SSR" else 1.15)
-    img = ImageEnhance.Contrast(img).enhance(1.1)
-    overlay_color = THEMES[rarity]["rgb"]
-    overlay = Image.new("RGBA", img.size, overlay_color)
-    img = Image.blend(img.convert("RGB"), overlay.convert("RGB"),
-                      0.1).convert("RGBA")
-    return img
+    
+    # Increase Saturation and Contrast for SSRs to make them "pop"
+    color_boost = 1.8 if rarity == "SSR" else 1.2
+    contrast_boost = 1.3 if rarity == "SSR" else 1.1
+    
+    img = ImageEnhance.Color(img).enhance(color_boost)
+    img = ImageEnhance.Contrast(img).enhance(contrast_boost)
+    
+    if rarity == "SSR":
+        # Create a dynamic rainbow spectrum overlay
+        rainbow = Image.new("RGBA", img.size)
+        draw = ImageDraw.Draw(rainbow)
+        
+        for x in range(img.width):
+            # Cycle through colors across the width of the card
+            hue = int((x / img.width) * 255)
+            # Simple RGB spectrum calculation
+            if hue < 85: r, g, b = 255, hue * 3, 0
+            elif hue < 170: r, g, b = 255 - (hue - 85) * 3, 255, 0
+            else: r, g, b = 0, 255, (hue - 170) * 3
+            
+            # Draw a thin vertical line for each color step with low opacity
+            draw.line([(x, 0), (x, img.height)], fill=(r, g, b, 45))
+        
+        # Composite the rainbow overlay onto the character image
+        img = Image.alpha_composite(img.convert("RGBA"), rainbow)
+    else:
+        # Standard themed sheen for SRs
+        overlay_color = THEMES[rarity]["rgb"]
+        overlay = Image.new("RGBA", img.size, overlay_color + (30,))
+        img = Image.blend(img.convert("RGBA"), overlay, 0.15)
+        
+    return img.convert("RGBA")
 
 
 def create_character_card(char_data, card_size=(200, 300)):
