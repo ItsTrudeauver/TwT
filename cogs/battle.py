@@ -23,11 +23,14 @@ class Battle(commands.Cog):
             if not slot_ids: return []
 
             # UPDATED SQL: Calculates boosted power based on i.dupe_level
+            # ... inside get_team_for_battle method ...
+
+            # UPDATED SQL: Use COALESCE to handle NULL dupe_levels safely
             chars = await conn.fetch("""
                 SELECT 
                     i.id, 
                     c.name, 
-                    FLOOR(c.true_power * (1 + (i.dupe_level * 0.05))) as true_power, 
+                    FLOOR(c.true_power * (1 + (COALESCE(i.dupe_level, 0) * 0.05))) as true_power, 
                     c.ability_tags, 
                     c.rarity, 
                     c.rank, 
