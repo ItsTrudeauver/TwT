@@ -4,7 +4,7 @@ import datetime
 import json
 from core.database import get_db_pool, get_user
 from core.economy import Economy, GEMS_PER_PULL
-from core.skill_handlers import SkillHandler
+from core.skills import get_skill_info
 
 class Expedition(commands.Cog):
     def __init__(self, bot):
@@ -17,6 +17,31 @@ class Expedition(commands.Cog):
         Ex: Lvl 1->2 needs 100 XP. Lvl 10->11 needs 10,000 XP.
         """
         return (level ** 2) * 100
+
+    def _get_active_skills(self, characters, context):
+        """
+        Helper to calculate active skills for a specific context (e.g., 'e' for expedition).
+        Respects the 'stackable' flag from the skill registry.
+        """
+        counts = {}
+        for char in characters:
+            if not char: continue
+            tags = char.get('ability_tags', [])
+            if isinstance(tags, str):
+                try:
+                    tags = json.loads(tags)
+                except json.JSONDecodeError:
+                    tags = []
+            
+            for tag in tags:
+                info = get_skill_info(tag)
+                if info and info.get('applies_in') == context:
+                    is_stackable = info.get('stackable', False)
+                    # If not stackable and we already have it, skip
+                    if not is_stackable and tag in counts:
+                        continue
+                    counts[tag] = counts.get(tag, 0) + 1
+        return counts
 
     async def get_expedition_data(self, user_id):
         """Fetches the user's current expedition squad and timing info."""
@@ -107,14 +132,21 @@ class Expedition(commands.Cog):
             base_gems = Economy.calculate_expedition_yield(total_power, duration_seconds)
             
             # 4. Apply Multipliers from Skills
-            team_skills = SkillHandler.get_active_skills(team_chars, context='e')
-            global_skills = SkillHandler.get_active_skills(all_inventory, context='g')
+            # UPDATED: Use local helper instead of removed SkillHandler
+            team_skills = self._get_active_skills(team_chars, context='e')
+            global_skills = self._get_active_skills(all_inventory, context='g')
 
             multiplier = 1.0
+            
+            # Hardworker: Stackable, applies in 'e'
             if "Hardworker" in team_skills:
                 multiplier += (0.15 * team_skills["Hardworker"])
+            
+            # Master of Coin: Stackable, applies in 'g'
             if "Master of Coin" in global_skills:
                 multiplier += (0.10 * global_skills["Master of Coin"])
+            
+            # The Long Road: Not stackable, applies in 'e'
             if "The Long Road" in team_skills:
                 duration_hours = min(duration_seconds / 3600, 24)
                 long_road_bonus = 0.24 * (duration_hours / 24)
@@ -122,7 +154,7 @@ class Expedition(commands.Cog):
 
             final_gems = int(base_gems * multiplier)
 
-            # --- NEW: LEVELING LOGIC START ---
+            # --- LEVELING LOGIC START ---
             
             # A. Calculate XP (1 XP per minute)
             xp_gained = int(duration_seconds / 60)
