@@ -12,61 +12,9 @@ from core.image_gen import generate_banner_image
 class Admin(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-    
-    import discord
-from discord.ext import commands
-from core.database import get_db_pool
-
-class Admin(commands.Cog):
-    def __init__(self, bot):
-        self.bot = bot
-    import discord
-from discord.ext import commands
-from core.database import get_db_pool
-
-class Admin(commands.Cog):
-    def __init__(self, bot):
-        self.bot = bot
 
     @commands.command(name="give")
-    @commands.has_permissions(administrator=True)
-    async def give(self, ctx, category: str, user: discord.User, amount_or_id: int):
-        """Admin command to give resources."""
-        pool = await get_db_pool()
-        
-        if category.lower() in ["gems", "gem", "money"]:
-            async with pool.acquire() as conn:
-                await conn.execute("INSERT INTO users (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING", str(user.id))
-                await conn.execute("UPDATE users SET gacha_gems = gacha_gems + $1 WHERE user_id = $2", amount_or_id, str(user.id))
-            await ctx.reply(f"✅ **Admin Action:** Gave **{amount_or_id:,} Gems** to {user.mention}!")
-
-        elif category.lower() in ["char", "character", "unit"]:
-            char_id = amount_or_id
-            async with pool.acquire() as conn:
-                char_info = await conn.fetchrow("SELECT name FROM characters_cache WHERE anilist_id = $1", char_id)
-                char_name = char_info['name'] if char_info else f"ID {char_id}"
-
-                existing = await conn.fetchrow(
-                    "SELECT id, dupe_level FROM inventory WHERE user_id = $1 AND anilist_id = $2", 
-                    str(user.id), char_id
-                )
-                
-                if existing:
-                    new_dupe = existing['dupe_level'] + 1
-                    await conn.execute("UPDATE inventory SET dupe_level = $1 WHERE id = $2", new_dupe, existing['id'])
-                    await ctx.reply(f"✅ **Admin Action:** {user.mention} already owned **{char_name}**. Upgraded to **Dupe Lv {new_dupe}**.")
-                else:
-                    await conn.execute(
-                        "INSERT INTO inventory (user_id, anilist_id, level, xp) VALUES ($1, $2, 1, 0)",
-                        str(user.id), char_id
-                    )
-                    await ctx.reply(f"✅ **Admin Action:** Added **{char_name}** to {user.mention}'s inventory.")
-        else:
-            await ctx.reply("❌ Use `gems` or `char`.")
-
-    
-    @commands.command(name="give")
-    @commands.has_permissions(administrator=True)
+    @commands.is_owner()
     async def give(self, ctx, category: str, user: discord.User, amount_or_id: int):
         """
         Admin command to give resources.
@@ -108,16 +56,15 @@ class Admin(commands.Cog):
                     await conn.execute("UPDATE inventory SET dupe_level = $1 WHERE id = $2", new_dupe, existing['id'])
                     await ctx.reply(f"✅ **Admin Action:** {user.mention} already owned **{char_name}**. Upgraded to **Dupe Lv {new_dupe}**.")
                 else:
-                    # Add New
+                    # Add New (Fixed schema to match your database: dupe_level defaults to 0, no level/xp columns)
                     await conn.execute(
-                        "INSERT INTO inventory (user_id, anilist_id, level, xp) VALUES ($1, $2, 1, 0)",
+                        "INSERT INTO inventory (user_id, anilist_id, dupe_level) VALUES ($1, $2, 0)",
                         str(user.id), char_id
                     )
                     await ctx.reply(f"✅ **Admin Action:** Successfully added **{char_name}** to {user.mention}'s inventory.")
 
         else:
             await ctx.reply("❌ Invalid category. Use `gems` or `char`.\nExample: `!give gems @User 100`")
-
 
     @commands.command(name="add_skill")
     @commands.is_owner()
@@ -322,7 +269,6 @@ class Admin(commands.Cog):
                 """, rarity, power, anilist_id)
                 name = char['name']
             
-            name = char['name'] if char else data['name']
             await ctx.reply(f"✅ **{name}** (ID: {anilist_id}) overridden to **{rarity}** with **{power:,} Power**.")
 
 async def setup(bot):
