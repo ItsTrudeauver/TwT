@@ -247,10 +247,13 @@ class Battle(commands.Cog):
         # --- TASK PROGRESS ---
         pool = await get_db_pool()
         await pool.execute("""
-            INSERT INTO daily_tasks (user_id, task_key, progress, last_updated)
-            VALUES ($1, $2, 1, CURRENT_DATE)
+            INSERT INTO daily_tasks (user_id, task_key, progress, last_updated, is_claimed)
+            VALUES ($1, $2, 1, CURRENT_DATE, FALSE)
             ON CONFLICT (user_id, task_key) 
-            DO UPDATE SET progress = 1, last_updated = CURRENT_DATE 
+            DO UPDATE SET 
+                progress = 1, 
+                last_updated = CURRENT_DATE, 
+                is_claimed = FALSE
             WHERE daily_tasks.last_updated < CURRENT_DATE OR daily_tasks.progress = 0
         """, attacker_id, task_key)
 
