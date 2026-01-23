@@ -174,7 +174,7 @@ class Battle(commands.Cog):
                     continue
                 
                 # Apply suppression to individual skills
-                p, logs = SkillHandler.apply_individual_battle_skills(char['true_power'], char, suppressed_skills=own_suppressed)
+                p, logs = SkillHandler.apply_individual_battle_skills(char['true_power'], char, team_list=team, suppressed_skills=own_suppressed)
                 slot_logs[i].extend(logs)
                 
                 variance = random.uniform(0.9, 1.1)
@@ -201,7 +201,7 @@ class Battle(commands.Cog):
 
             team_total = sum(temp_powers) * team_multiplier
             # Apply suppression to team-wide mods (like Guard)
-            final_total, team_mods = SkillHandler.apply_team_battle_mods(team_total, enemy_skills, suppressed_skills=enemy_suppressed)
+            final_total, team_mods = SkillHandler.apply_team_battle_mods(team_total, team, enemy_skills, suppressed_skills=enemy_suppressed)
             misc_logs.extend(team_mods)
             
             return final_total

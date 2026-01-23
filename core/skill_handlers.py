@@ -126,7 +126,7 @@ class SkillHandler:
         return effect, log
 
     @staticmethod
-    def apply_individual_battle_skills(base_power, char, suppressed_skills=None):
+    def apply_individual_battle_skills(base_power, char, team_list=None, suppressed_skills=None):
         """
         Calculates individual power modifiers and generates logs.
         Returns: (modified_power, list_of_log_strings)
@@ -141,6 +141,13 @@ class SkillHandler:
         modified_power = base_power
         logs = []
         suppressed = suppressed_skills or []
+        team = team_list or []
+
+        if "Eternity" in tags and "Eternity" not in suppressed:
+            val_data = SKILL_DATA["Eternity"]["value"]
+            if any(c.get('anilist_id') == val_data[0] for c in team if c):
+                modified_power *= (1 + val_data[1])
+                logs.append(f"⏳ **{char['name']}** found strength in memory (+{int(val_data[1]*100)}%)!")
 
         if "Lucky 7" in tags and "Lucky 7" not in suppressed:
             if random.random() < 0.77:
@@ -179,7 +186,7 @@ class SkillHandler:
         return modified_power, logs
 
     @staticmethod
-    def apply_team_battle_mods(team_power, enemy_active_skills, suppressed_skills=None):
+    def apply_team_battle_mods(team_power, own_team, enemy_active_skills, suppressed_skills=None):
         """
         Calculates team-wide power modifiers (like debuffs from the enemy).
         Returns: (final_power, list_of_log_strings)
@@ -187,6 +194,23 @@ class SkillHandler:
         final_power = team_power
         logs = []
         suppressed = suppressed_skills or []
+
+        # Ephemerality: If Frieren is present, team gains power.
+        eph_data = SKILL_DATA["Ephemerality"]["value"]
+        if any(c.get('anilist_id') == eph_data[0] for c in own_team if c):
+            # Check if anyone in the team actually has the Ephemerality skill
+            has_ephemerality = False
+            for c in own_team:
+                if not c: continue
+                tags = c.get('ability_tags', [])
+                if isinstance(tags, str): tags = json.loads(tags)
+                if "Ephemerality" in tags and "Ephemerality" not in suppressed:
+                    has_ephemerality = True
+                    break
+            
+            if has_ephemerality:
+                final_power *= (1 + eph_data[1])
+                logs.append(f"❄️ **Ephemerality** triggered by Frieren's presence (+{float(eph_data[1]*100)}% Team Power)!")
 
         if "Guard" in enemy_active_skills and "Guard" not in suppressed:
             val = SKILL_DATA["Guard"]["value"]
