@@ -5,6 +5,22 @@
 # core/skills.py
 
 SKILL_DATA = {
+    "The Onyx Moon": {
+        "description": "Casts Umbra: disable one random enemy skill. If Coco is present, casts Eclipse instead: The unit with the disabled skill also loses 25% power.",
+        "value": [129840, 0.25],
+        "applies_in": "b",
+        "stackable": False,
+        "overlap": False
+    },
+    
+    "The Amber Sun": {
+        "description": "If Agott is present, both units gain 15% power.",
+        "value": [129842, 0.15],
+        "applies_in": "b",
+        "stackable": False,
+        "overlap": False
+    },
+    
     "Eternity": {
         "description": "If Himmel is present, this unit gains 10% power.",
         "value": [184311, 0.1],
