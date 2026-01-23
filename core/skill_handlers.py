@@ -147,7 +147,7 @@ class SkillHandler:
             val_data = SKILL_DATA["Eternity"]["value"]
             if any(c.get('anilist_id') == val_data[0] for c in team if c):
                 modified_power *= (1 + val_data[1])
-                logs.append(f"🌌** Duo Skill**: {char['name']} found strength in memory of Himmel (+{int(val_data[1]*100)}%)!")
+                logs.append(f"🌌** Duo Skill - Eternity**: {char['name']} found strength in memory of Himmel (+{int(val_data[1]*100)}%)!")
 
         if "Lucky 7" in tags and "Lucky 7" not in suppressed:
             if random.random() < 0.77:
@@ -210,7 +210,7 @@ class SkillHandler:
             
             if has_ephemerality:
                 final_power *= (1 + eph_data[1])
-                logs.append(f"🌿 **Duo Skill**: Ephemerality triggered by Frieren's and Himmel's presence (+{float(eph_data[1]*100)}% Team Power)!")
+                logs.append(f"🌿 **Duo Skill - Ephemerality**: Frieren's and Himmel's presence boosted the party (+{float(eph_data[1]*100)}% Team Power)!")
 
         if "Guard" in enemy_active_skills and "Guard" not in suppressed:
             val = SKILL_DATA["Guard"]["value"]
