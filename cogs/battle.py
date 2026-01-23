@@ -32,6 +32,7 @@ class Battle(commands.Cog):
             chars = await conn.fetch("""
                 SELECT 
                     i.id, 
+                    c.anilist_id,
                     c.name, 
                     FLOOR(c.true_power * (1 + (COALESCE(i.dupe_level, 0) * 0.05)) * (1 + (COALESCE(u.team_level, 1) * 0.01)))::int as true_power, 
                     i.dupe_level, -- FETCH THIS FIELD FOR THE IMAGE GEN
