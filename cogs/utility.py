@@ -5,7 +5,9 @@ import json
 import os
 from core.database import get_db_pool
 from core.game_math import calculate_effective_power
-from core.skills import SKILL_DATA
+# Updated import to include get_skill_info
+from core.skills import SKILL_DATA, get_skill_info
+
 class SkillPagination(discord.ui.View):
     def __init__(self, pages):
         super().__init__(timeout=60)  # Buttons disable after 60 seconds
@@ -30,7 +32,53 @@ class SkillPagination(discord.ui.View):
             await self.update_view(interaction)
         else:
             await interaction.response.send_message("You are on the last page.", ephemeral=True)
-            
+
+# --- NEW DROPDOWN CLASSES ---
+class SkillDropdown(discord.ui.Select):
+    def __init__(self):
+        options = []
+        # Sort skills alphabetically and slice to 25 (Discord's limit per dropdown)
+        sorted_skills = sorted(list(SKILL_DATA.keys()))
+        
+        for skill_name in sorted_skills[:25]:
+            options.append(discord.SelectOption(label=skill_name))
+
+        super().__init__(placeholder="👇 Select a skill...", min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        skill_name = self.values[0]
+        data = SKILL_DATA.get(skill_name)
+
+        if not data:
+            await interaction.response.send_message("❌ Error: Skill data unavailable.", ephemeral=True)
+            return
+
+        # Build the details embed
+        embed = discord.Embed(title=f"✨ {skill_name}", description=data['description'], color=0x2ECC71)
+        
+        # Determine Context
+        applies_map = {"b": "Battle", "e": "Expedition", "g": "Global"}
+        context = applies_map.get(data['applies_in'], "Unknown")
+        
+        # Determine Attributes
+        attrs = []
+        if data['stackable']: attrs.append("Stackable")
+        if data['overlap']: attrs.append("Overlap OK")
+        attr_str = ", ".join(attrs) if attrs else "Unique / No Overlap"
+
+        embed.add_field(name="Type", value=context, inline=True)
+        embed.add_field(name="Attributes", value=attr_str, inline=True)
+        embed.add_field(name="Raw Value", value=f"`{data['value']}`", inline=False)
+
+        # Update the message with the embed and remove the dropdown
+        await interaction.response.edit_message(content=None, embed=embed, view=None)
+
+class SkillDropdownView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=60)
+        self.add_item(SkillDropdown())
+# ----------------------------
+
 class Utility(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -115,6 +163,48 @@ class Utility(commands.Cog):
 
         view = SkillPagination(pages)
         await ctx.reply(embed=pages[0], view=view)
+
+    # --- NEW FUNCTION HERE ---
+    @commands.command(name="skill_details", aliases=["sd", "skillinfo"])
+    async def skill_details(self, ctx, *, skill_name: str = None):
+        """
+        View detailed stats of a skill.
+        Usage: !sd [skill name] OR !sd (to view dropdown)
+        """
+        # 1. Dropdown Mode
+        if not skill_name:
+            view = SkillDropdownView()
+            return await ctx.reply("📖 **Select a skill to view details:**", view=view)
+
+        # 2. Text Search Mode
+        data = get_skill_info(skill_name)
+        if not data:
+            return await ctx.reply(f"❌ Skill `{skill_name}` not found.")
+
+        # Find the correct casing for the Title
+        real_name = skill_name
+        for key in SKILL_DATA.keys():
+            if key.lower() == skill_name.lower():
+                real_name = key
+                break
+
+        embed = discord.Embed(title=f"✨ {real_name}", description=data['description'], color=0x2ECC71)
+        
+        # Formatting
+        applies_map = {"b": "Battle", "e": "Expedition", "g": "Global"}
+        context = applies_map.get(data['applies_in'], "Unknown")
+        
+        attrs = []
+        if data['stackable']: attrs.append("Stackable")
+        if data['overlap']: attrs.append("Overlap OK")
+        attr_str = ", ".join(attrs) if attrs else "Unique / No Overlap"
+
+        embed.add_field(name="Type", value=context, inline=True)
+        embed.add_field(name="Attributes", value=attr_str, inline=True)
+        embed.add_field(name="Raw Value", value=f"`{data['value']}`", inline=False)
+
+        await ctx.reply(embed=embed)
+    # -------------------------
 
     @commands.command(name="lookup")
     async def lookup(self, ctx, *, name: str):
