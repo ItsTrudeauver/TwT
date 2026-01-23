@@ -114,7 +114,7 @@ class Battle(commands.Cog):
         def_slot_logs = {i: [] for i in range(len(defender_team))}
         atk_misc_logs, def_misc_logs = [], [] 
 
-        # 1. ZODIAC ROLLS FIRST (No matter what)
+        # 1. ZODIAC ROLLS FIRST
         def pre_battle_phase(team, opp_team, slot_logs):
             zodiac_effects = []
             for i, char in enumerate(team):
@@ -129,29 +129,59 @@ class Battle(commands.Cog):
         atk_z_effects = pre_battle_phase(attacker_team, defender_team, atk_slot_logs)
         def_z_effects = pre_battle_phase(defender_team, attacker_team, def_slot_logs)
 
-        # 2. PIG EFFECT LOGIC: Determine which skills are suppressed
-        def get_suppressed_skills(z_effects, own_team, opp_team, slot_logs):
-            suppressed = []
+        # 2. HANDLE DISABLES (Pig + The Onyx Moon)
+        def handle_disables(z_effects, own_team, opp_team, slot_logs):
+            suppressed = set()
+            debuffs = {} # {opp_unit_index: multiplier}
+
+            # Helper to get all enemy (index, skill) pairs
+            enemy_skills = []
+            for i, c in enumerate(opp_team):
+                if not c: continue
+                tags = c.get('ability_tags', [])
+                if isinstance(tags, str): tags = json.loads(tags)
+                for tag in tags:
+                    if tag not in ["Queen of the Zodiacs"]: 
+                        enemy_skills.append((i, tag))
+            
+            # --- Pig Logic ---
             for idx, eff in z_effects:
                 if eff.get("disable_random_opp_skill"):
-                    # Find a skill to disable from the opponent
-                    potential_skills = set()
-                    for char in opp_team:
-                        tags = char.get('ability_tags', [])
-                        if isinstance(tags, str): tags = json.loads(tags)
-                        potential_skills.update(tags)
-                    
-                    # Remove self-meta skills or empty results
-                    potential_skills.discard("Queen of the Zodiacs")
-                    if potential_skills:
-                        target = random.choice(list(potential_skills))
-                        suppressed.append(target)
-                        # Update the generic Pig log with the specific skill name
-                        slot_logs[idx][-1] = f"👑 **{own_team[idx]['name']}** invoked the **Pig** Zodiac: Muddied the waters, disabling **{target}**!"
-            return suppressed
+                    if enemy_skills:
+                        # Pick a random skill type from the pool
+                        _, target_skill = random.choice(enemy_skills)
+                        suppressed.add(target_skill)
+                        slot_logs[idx][-1] = f"👑 **{own_team[idx]['name']}** invoked the **Pig** Zodiac: Muddied the waters, disabling **{target_skill}**!"
 
-        atk_suppressed = get_suppressed_skills(atk_z_effects, attacker_team, defender_team, atk_slot_logs)
-        def_suppressed = get_suppressed_skills(def_z_effects, defender_team, attacker_team, def_slot_logs)
+            # --- Onyx Moon Logic ---
+            for idx, char in enumerate(own_team):
+                tags = char.get('ability_tags', [])
+                if isinstance(tags, str): tags = json.loads(tags)
+                
+                # Note: Onyx Moon is an "always on" start-of-battle effect, similar to Zodiacs
+                if "The Onyx Moon" in tags:
+                    if not enemy_skills:
+                        slot_logs[idx].append(f"🌑 **{char['name']}** cast **The Onyx Moon**, but there were no skills to silence.")
+                        continue
+
+                    target_idx, target_skill = random.choice(enemy_skills)
+                    suppressed.add(target_skill)
+                    
+                    # Check for Coco (ID 129840)
+                    has_coco = any(c.get('anilist_id') == 129840 for c in own_team if c)
+                    
+                    if has_coco:
+                        # Eclipse: Silence + 25% Power Loss
+                        debuffs[target_idx] = debuffs.get(target_idx, 1.0) * 0.75
+                        slot_logs[idx].append(f"🌑 **{char['name']}** cast **Eclipse** (w/ Coco)! Silenced **{target_skill}** and drained **{opp_team[target_idx]['name']}** (-25% Power).")
+                    else:
+                        # Umbra: Silence Only
+                        slot_logs[idx].append(f"🌑 **{char['name']}** cast **Umbra**! Silenced **{target_skill}**.")
+
+            return list(suppressed), debuffs
+
+        atk_suppressed, atk_debuffs_on_def = handle_disables(atk_z_effects, attacker_team, defender_team, atk_slot_logs)
+        def_suppressed, def_debuffs_on_atk = handle_disables(def_z_effects, defender_team, attacker_team, def_slot_logs)
 
         # 3. GET ACTIVE SKILLS (Accounting for suppression)
         atk_active_skills = SkillHandler.get_active_skills(attacker_team, suppressed_skills=def_suppressed)
@@ -164,7 +194,7 @@ class Battle(commands.Cog):
         def_misc_logs.extend(k_logs_d)
 
         # 5. Final Power Calculation
-        def calculate_total_team_power(team, ignored, z_effects, opp_team, slot_logs, misc_logs, enemy_skills, own_suppressed, enemy_suppressed):
+        def calculate_total_team_power(team, ignored, z_effects, opp_team, slot_logs, misc_logs, enemy_skills, own_suppressed, enemy_suppressed, incoming_debuffs):
             team_multiplier = 1.0
             temp_powers = []
             
@@ -177,6 +207,11 @@ class Battle(commands.Cog):
                 p, logs = SkillHandler.apply_individual_battle_skills(char['true_power'], char, team_list=team, suppressed_skills=own_suppressed)
                 slot_logs[i].extend(logs)
                 
+                # Apply Incoming Debuffs (e.g. Eclipse)
+                if i in incoming_debuffs:
+                    p *= incoming_debuffs[i]
+                
+                # Zodiac Self/Team effects
                 variance = random.uniform(0.9, 1.1)
                 for idx, eff in z_effects:
                     if idx == i:
@@ -206,8 +241,9 @@ class Battle(commands.Cog):
             
             return final_total
 
-        final_atk_power = calculate_total_team_power(attacker_team, def_ignored, atk_z_effects, defender_team, atk_slot_logs, atk_misc_logs, def_active_skills, atk_suppressed, def_suppressed)
-        final_def_power = calculate_total_team_power(defender_team, atk_ignored, def_z_effects, attacker_team, def_slot_logs, def_misc_logs, atk_active_skills, def_suppressed, atk_suppressed)
+        # Note: def_debuffs_on_atk contains debuffs applied BY defender ON attacker.
+        final_atk_power = calculate_total_team_power(attacker_team, def_ignored, atk_z_effects, defender_team, atk_slot_logs, atk_misc_logs, def_active_skills, atk_suppressed, def_suppressed, def_debuffs_on_atk)
+        final_def_power = calculate_total_team_power(defender_team, atk_ignored, def_z_effects, attacker_team, def_slot_logs, def_misc_logs, atk_active_skills, def_suppressed, atk_suppressed, atk_debuffs_on_def)
 
         # Flatten logs: Slot 1 -> Slot 5 (Zodiac + Individual combined), then misc team effects
         atk_logs = [log for i in range(len(attacker_team)) for log in atk_slot_logs[i]] + atk_misc_logs

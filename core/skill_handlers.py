@@ -24,7 +24,7 @@ class SkillHandler:
                     tags = []
 
             for skill_name in tags:
-                if skill_name in suppressed: continue # PIG EFFECT CHECK
+                if skill_name in suppressed: continue # PIG/ONYX MOON CHECK
                 config = SKILL_DATA.get(skill_name)
                 if not config or (config['applies_in'] not in [context, 'g']):
                     continue
@@ -148,6 +148,32 @@ class SkillHandler:
             if any(c.get('anilist_id') == val_data[0] for c in team if c):
                 modified_power *= (1 + val_data[1])
                 logs.append(f"🌌** Duo Skill - Eternity**: {char['name']} found strength in memory of Himmel (+{int(val_data[1]*100)}%)!")
+
+        # --- THE AMBER SUN (Caster Side) ---
+        if "The Amber Sun" in tags and "The Amber Sun" not in suppressed:
+            # Check for Agott (129842)
+            val_data = SKILL_DATA["The Amber Sun"]["value"] # [129842, 0.15]
+            if any(c.get('anilist_id') == val_data[0] for c in team if c):
+                modified_power *= (1 + val_data[1])
+                logs.append(f"☀️ **{char['name']}** resonated with Agott (+{int(val_data[1]*100)}%)!")
+
+        # --- THE AMBER SUN (Agott Side) ---
+        # If this character IS Agott (129842), check if anyone else has The Amber Sun
+        if char.get('anilist_id') == 129842:
+            # Check teammates for the skill
+            has_amber_source = False
+            for mate in team:
+                if not mate: continue
+                m_tags = mate.get('ability_tags', [])
+                if isinstance(m_tags, str): m_tags = json.loads(m_tags)
+                if "The Amber Sun" in m_tags and "The Amber Sun" not in suppressed:
+                    has_amber_source = True
+                    break
+            
+            if has_amber_source:
+                val_data = SKILL_DATA["The Amber Sun"]["value"]
+                modified_power *= (1 + val_data[1])
+                logs.append(f"☀️ **{char['name']}** was empowered by The Amber Sun (+{int(val_data[1]*100)}%)!")
 
         if "Lucky 7" in tags and "Lucky 7" not in suppressed:
             if random.random() < 0.07:
