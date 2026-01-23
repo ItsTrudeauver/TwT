@@ -4,6 +4,7 @@ import datetime
 import json
 import random
 from core.database import get_db_pool, get_user
+from core.emotes import Emotes  # Import Emotes
 
 class ShopView(discord.ui.View):
     def __init__(self, shop_items, bot):
@@ -158,7 +159,7 @@ class Shop(commands.Cog):
         embed = discord.Embed(
             title=f"🛒 Daily Character Shop",
             description=f"**Date:** {datetime.datetime.utcnow().strftime('%Y-%m-%d')}\n"
-                        f"**Your Balance:** {user['gacha_gems']:,} 💎",
+                        f"**Your Balance:** {user['gacha_gems']:,} {Emotes.GEMS}",
             color=discord.Color.gold()
         )
         
@@ -179,7 +180,7 @@ class Shop(commands.Cog):
                 price_display = f"~~{price:,}~~ **{discounted:,}**"
 
             rate_up = "🔥" if item.get('rate_up') else ""
-            list_str += f"**{item['name']}** `[{item['rarity']}]` {rate_up} — 💎 {price_display}\n"
+            list_str += f"**{item['name']}** `[{item['rarity']}]` {rate_up} — {Emotes.GEMS} {price_display}\n"
 
         embed.add_field(name="Today's Selection", value=list_str if list_str else "None", inline=False)
         embed.set_footer(text="Use the dropdown menu below to purchase.")

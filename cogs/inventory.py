@@ -3,6 +3,7 @@ from discord.ext import commands
 import math
 import json
 from core.database import get_db_pool, get_user, mass_scrap_r_rarity
+from core.emotes import Emotes  # Import Emotes
 
 class InventoryView(discord.ui.View):
     def __init__(self, bot, user, pool, per_page=10):
@@ -43,7 +44,7 @@ class InventoryView(discord.ui.View):
         """, user_id_str, self.per_page, offset)
 
         embed = discord.Embed(title=f"🎒 {self.user.display_name}'s Inventory", color=0x3498DB)
-        embed.description = f"💎 **Gems:** `{user_data['gacha_gems']:,}`\n"
+        embed.description = f"{Emotes.GEMS} **Gems:** `{user_data['gacha_gems']:,}`\n"
         embed.description += f"📦 **Total Units:** `{count_val}`\n"
         embed.description += "─" * 25 + "\n"
 
@@ -89,7 +90,7 @@ class Inventory(commands.Cog):
     @commands.command(name="gems", aliases=["pc", "wallet", "profile"])
     async def check_balance(self, ctx):
         user_data = await get_user(ctx.author.id)
-        await ctx.reply(f"💎 {ctx.author.mention}, you currently have **{user_data['gacha_gems']:,}** Gems.")
+        await ctx.reply(f"{Emotes.GEMS} {ctx.author.mention}, you currently have **{user_data['gacha_gems']:,}** Gems.")
 
     @commands.command(name="inventory", aliases=["inv"])
     async def show_inventory(self, ctx):
