@@ -150,7 +150,7 @@ class SkillHandler:
                 logs.append(f"🌌** Duo Skill - Eternity**: {char['name']} found strength in memory of Himmel (+{int(val_data[1]*100)}%)!")
 
         if "Lucky 7" in tags and "Lucky 7" not in suppressed:
-            if random.random() < 0.7:
+            if random.random() < 0.07:
                 modified_power *= 8.77
                 logs.append(f"✨ **{char['name']}** hit the Lucky 7 Jackpot (+777% Power)!")
             elif random.random() < 0.77:
