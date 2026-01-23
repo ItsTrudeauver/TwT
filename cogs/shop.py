@@ -70,8 +70,9 @@ class ShopDropdown(discord.ui.Select):
                 await conn.execute("UPDATE inventory SET dupe_level = $1 WHERE id = $2", new_dupe, existing['id'])
                 msg = f"✅ **Purchased!**\n**{target_item['name']}** upgraded to Dupe Level **{new_dupe}**!"
             else:
+                # FIXED: Removed 'level' and 'xp', added 'dupe_level' to match database schema
                 await conn.execute(
-                    "INSERT INTO inventory (user_id, anilist_id, level, xp) VALUES ($1, $2, 1, 0)",
+                    "INSERT INTO inventory (user_id, anilist_id, dupe_level) VALUES ($1, $2, 0)",
                     user_id, target_item['anilist_id']
                 )
                 msg = f"✅ **Purchased!**\n**{target_item['name']}** added to your inventory!"
