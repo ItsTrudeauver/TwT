@@ -5,6 +5,7 @@ import json
 from core.database import get_db_pool, get_user
 from core.economy import Economy, GEMS_PER_PULL
 from core.skills import get_skill_info
+from core.emotes import Emotes
 
 class Expedition(commands.Cog):
     def __init__(self, bot):
@@ -195,7 +196,7 @@ class Expedition(commands.Cog):
             """, now, user_id)
 
             # 6. Build Message
-            msg = f"💰 **Expedition Complete!**\nEarned: **{final_gems:,} Gems**\n✨ **Team XP:** +{xp_gained}"
+            msg = f"💰 **Expedition Complete!**\nEarned: **{final_gems:,} {Emotes.GEMS}**\n✨ **Team XP:** +{xp_gained}"
             
             if leveled_up:
                 msg += f"\n\n🎉 **LEVEL UP!**\nYou reached **Team Level {cur_lvl}**!\n⚡ All units gained **+{levels_gained}% Power** (Total: +{cur_lvl}%)"

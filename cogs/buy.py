@@ -1,6 +1,7 @@
 import discord
 from discord.ext import commands
 from core.economy import Economy
+from core.emotes import Emotes
 
 class Buy(commands.Cog):
     def __init__(self, bot):
@@ -28,7 +29,7 @@ class Buy(commands.Cog):
         if result["success"]:
             embed = discord.Embed(
                 title="✅ Purchase Successful",
-                description=f"You successfully bought **{result['amount']:,} Gems**!",
+                description=f"You successfully bought **{result['amount']:,} {Emotes.GEMS}**!",
                 color=discord.Color.green()
             )
             embed.set_footer(text="Gems have been added to your gacha balance.")

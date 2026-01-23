@@ -90,7 +90,7 @@ class Inventory(commands.Cog):
     @commands.command(name="gems", aliases=["pc", "wallet", "profile"])
     async def check_balance(self, ctx):
         user_data = await get_user(ctx.author.id)
-        await ctx.reply(f"{Emotes.GEMS} {ctx.author.mention}, you currently have **{user_data['gacha_gems']:,}** Gems.")
+        await ctx.reply(f"{ctx.author.mention}, you currently have **{user_data['gacha_gems']:,}** {Emotes.GEMS}")
 
     @commands.command(name="inventory", aliases=["inv"])
     async def show_inventory(self, ctx):
@@ -159,7 +159,7 @@ class Inventory(commands.Cog):
     @commands.command(name="scrap_all", aliases=["mass_scrap"])
     async def scrap_all(self, ctx):
         count, reward = await mass_scrap_r_rarity(ctx.author.id)
-        await ctx.reply(f"♻️ Scrapped {count} units for {reward:,} Gems!" if count > 0 else "❌ No units to scrap.")
+        await ctx.reply(f"♻️ Scrapped {count} units for {reward:,} {Emotes.GEMS}!" if count > 0 else "❌ No units to scrap.")
 
 async def setup(bot):
     await bot.add_cog(Inventory(bot))

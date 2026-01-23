@@ -8,6 +8,7 @@ import asyncio
 from core.database import get_db_pool, batch_cache_characters
 from core.skills import get_skill_info, list_all_skills
 from core.image_gen import generate_banner_image
+from core.emotes import Emotes
 
 class Admin(commands.Cog):
     def __init__(self, bot):
@@ -33,7 +34,7 @@ class Admin(commands.Cog):
                 # Add Gems
                 await conn.execute("UPDATE users SET gacha_gems = gacha_gems + $1 WHERE user_id = $2", amount_or_id, str(user.id))
             
-            await ctx.reply(f"✅ **Admin Action:** Gave **{amount_or_id:,} Gems** to {user.mention}!")
+            await ctx.reply(f"✅ **Admin Action:** Gave **{amount_or_id:,} {Emotes.GEMS}** to {user.mention}!")
 
         # --- GIVE CHARACTER ---
         elif category.lower() in ["char", "character", "unit"]:

@@ -173,7 +173,7 @@ class Event(commands.Cog):
             
             # Everyone Else: Consolation Gems (10% of Score)
             for row in rows[1:]:
-                gems = int(row['score'] * 0.1)
+                gems = int(row['score'] * 0.01)
                 await conn.execute(
                     "UPDATE users SET gacha_gems = gacha_gems + $1 WHERE user_id = $2",
                     gems, row['user_id']

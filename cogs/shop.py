@@ -20,7 +20,7 @@ class ShopDropdown(discord.ui.Select):
             # We use the index as the unique value to identify the item
             options.append(discord.SelectOption(
                 label=f"{item['name']} ({item['rarity']})",
-                description=f"Base Cost: {item['base_price']:,} Gems",
+                description=f"Base Cost: {item['base_price']:,} {Emotes.GEMS}",
                 value=str(idx),
                 emoji="🪙"
             ))
@@ -79,7 +79,7 @@ class ShopDropdown(discord.ui.Select):
 
             # Add discount note
             if discount_active:
-                msg += f"\n📉 **Level 30 Discount Applied:** Saved {target_item['base_price'] - final_price:,} Gems!"
+                msg += f"\n📉 **Level 30 Discount Applied:** Saved {target_item['base_price'] - final_price:,} {Emotes.GEMS}!"
 
             await interaction.response.send_message(msg, ephemeral=False)
 

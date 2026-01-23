@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 import datetime
 from core.database import get_db_pool, add_currency
+from core.emotes import Emotes
 
 NPC_DATA = {
     "easy":      {"reward": 500,  "desc": "Defeat an Easy NPC Team (5 R)"},
@@ -30,7 +31,7 @@ class Daily(commands.Cog):
 
             await add_currency(user_id, 1500)
             await conn.execute("UPDATE users SET last_daily_exchange = CURRENT_TIMESTAMP WHERE user_id = $1", user_id)
-            await ctx.reply("📅 **Check-in Successful!** +1,500 Gems awarded.")
+            await ctx.reply(f"📅 **Check-in Successful!** +1,500 {Emotes.GEMS} awarded.")
 
     @commands.command(name="tasks")
     async def view_tasks(self, ctx):
@@ -49,12 +50,12 @@ class Daily(commands.Cog):
         
         # PVP Task
         p_status = "✅ Claimed" if completed.get('pvp') else ("🎁 !claim pvp" if progress.get('pvp') else "⏳ 0/1")
-        embed.add_field(name="PVP: Battle a Player", value=f"Reward: 500 Gems | {p_status}", inline=False)
+        embed.add_field(name="PVP: Battle a Player", value=f"Reward: 500 {Emotes.GEMS} | {p_status}", inline=False)
 
         # NPC Tasks
         for key, info in NPC_DATA.items():
             status = "✅ Claimed" if completed.get(key) else ("🎁 !claim " + key if progress.get(key) else "⏳ 0/1")
-            embed.add_field(name=f"NPC: {key.capitalize()}", value=f"Reward: {info['reward']} Gems | {status}", inline=False)
+            embed.add_field(name=f"NPC: {key.capitalize()}", value=f"Reward: {info['reward']} {Emotes.GEMS} | {status}", inline=False)
 
         await ctx.reply(embed=embed)
 
@@ -75,7 +76,7 @@ class Daily(commands.Cog):
 
             await add_currency(user_id, reward)
             await conn.execute("UPDATE daily_tasks SET is_claimed = TRUE WHERE user_id = $1 AND task_key = $2", user_id, task)
-            await ctx.reply(f"🎉 **Claimed {reward:,} Gems** for {task} task!")
+            await ctx.reply(f"🎉 **Claimed {reward:,} {Emotes.GEMS}** for {task} task!")
 
 async def setup(bot):
     await bot.add_cog(Daily(bot))

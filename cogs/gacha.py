@@ -11,6 +11,7 @@ from core.database import get_user, batch_add_to_inventory, batch_cache_characte
 from core.game_math import calculate_effective_power
 from core.image_gen import generate_10_pull_image
 from core.economy import Economy, GEMS_PER_PULL
+from core.emotes import Emotes
 
 class Gacha(commands.Cog):
     def __init__(self, bot):
@@ -231,7 +232,7 @@ class Gacha(commands.Cog):
         is_free = await Economy.is_free_pull(ctx.author, self.bot)
 
         if not is_free and user_data['gacha_gems'] < cost:
-            return await ctx.reply(f"❌ Need **{cost:,} Gems**. Balance: **{user_data['gacha_gems']:,}**")
+            return await ctx.reply(f"❌ Need **{cost:,} {Emotes.GEMS}**. Balance: **{user_data['gacha_gems']:,}**")
 
         loading = await ctx.reply(f"🎰 *Pulling {amount}x...*")
         try:
@@ -266,7 +267,7 @@ class Gacha(commands.Cog):
                 
                 desc = f"**{c['rarity']}** | Power: **{boosted_power:,}** (Lv.{dupe_lv})"
                 if scrapped_gems > 0:
-                    desc += f"\n♻️ **Max Dupes!** Scrapped for **{scrapped_gems:,} Gems**"
+                    desc += f"\n♻️ **Max Dupes!** Scrapped for **{scrapped_gems:,} {Emotes.GEMS}**"
                 
                 embed = discord.Embed(title=f"✨ {c['name']}", description=desc, color=0xFFD700)
                 embed.set_image(url=c['image_url'])
@@ -275,7 +276,7 @@ class Gacha(commands.Cog):
             else:
                 img = await generate_10_pull_image(pulled_chars)
                 await loading.delete()
-                msg = f"♻️ **Auto-scrapped extras for {scrapped_gems:,} Gems!**" if scrapped_gems > 0 else ""
+                msg = f"♻️ **Auto-scrapped extras for {scrapped_gems:,} {Emotes.GEMS}!**" if scrapped_gems > 0 else ""
                 await ctx.reply(content=msg, file=discord.File(fp=img, filename="10pull.png"))
 
         except Exception as e:
