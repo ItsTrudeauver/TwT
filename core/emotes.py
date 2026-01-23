@@ -3,7 +3,5 @@
 class Emotes:
     # Currencies
     GEMS = "<:gems:1464005694012260372>"
+    COINS = "<:coins:1464359906713927765>"
     
-    # You can add others here in the future, e.g.:
-    # COIN = "💰"
-    # SWORD = "⚔️"

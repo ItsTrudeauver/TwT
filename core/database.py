@@ -315,3 +315,4 @@ async def mass_scrap_r_rarity(user_id):
                 )
                 return count, reward
             return 0, 0
+
