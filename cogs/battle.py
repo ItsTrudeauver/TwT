@@ -3,6 +3,7 @@ from discord.ext import commands
 import random
 import json
 import io
+import typing
 from core.database import get_db_pool
 from core.game_math import calculate_effective_power
 from core.skill_handlers import SkillHandler
@@ -76,22 +77,34 @@ class Battle(commands.Cog):
         return team
 
     @commands.command(name="battle")
-    async def battle(self, ctx, target: discord.Member = None):
+    async def battle(self, ctx, target: typing.Union[discord.Member, str] = None):
         """Initiates a team-based battle against a player or NPC."""
         attacker_id = str(ctx.author.id)
         attacker_team = await self.get_team_for_battle(attacker_id)
+        task_key = None
 
         if not attacker_team:
             return await ctx.reply("❌ Your team is empty! Use `!team` to set one up.")
 
-        if target:
+        if isinstance(target, discord.Member):
             defender_team = await self.get_team_for_battle(str(target.id))
             defender_name = target.display_name
+            task_key = "pvp"
             if not defender_team:
                 return await ctx.reply(f"❌ {target.display_name} does not have a team set up.")
+        elif isinstance(target, str):
+            diff = target.lower()
+            valid_diffs = ["easy", "normal", "hard", "expert", "nightmare", "hell"]
+            if diff not in valid_diffs:
+                return await ctx.reply(f"❌ Invalid difficulty. Choose from: {', '.join(valid_diffs)}")
+            
+            defender_team = self.generate_npc_team(diff)
+            defender_name = f"{diff.capitalize()} NPC"
+            task_key = diff
         else:
             defender_team = self.generate_npc_team("normal")
             defender_name = "Training Dummy NPC"
+            task_key = "normal"
 
         loading_msg = await ctx.reply("⚔️ **The battle is commencing...**")
 
@@ -228,6 +241,17 @@ class Battle(commands.Cog):
             embed.add_field(name="🔹 Attacker Highlights", value="\n".join(atk_logs[:10]), inline=False)
         if def_logs:
             embed.add_field(name="🔸 Defender Highlights", value="\n".join(def_logs[:10]), inline=False)
+
+        # Image
+        # --- TASK PROGRESS ---
+        pool = await get_db_pool()
+        await pool.execute("""
+            INSERT INTO daily_tasks (user_id, task_key, progress, last_updated)
+            VALUES ($1, $2, 1, CURRENT_DATE)
+            ON CONFLICT (user_id, task_key) 
+            DO UPDATE SET progress = 1, last_updated = CURRENT_DATE 
+            WHERE daily_tasks.last_updated < CURRENT_DATE OR daily_tasks.progress = 0
+        """, attacker_id, task_key)
 
         # Image
         img_bytes = await generate_battle_image(attacker_team, defender_team, ctx.author.display_name, defender_name, winner_idx=win_idx)
