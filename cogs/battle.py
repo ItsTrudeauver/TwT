@@ -1,13 +1,14 @@
+# cogs/battle.py
+
 import discord
 from discord.ext import commands
 import random
 import json
-import io
 import typing
 from core.database import get_db_pool
 from core.game_math import calculate_effective_power
-from core.skill_handlers import SkillHandler
 from core.image_gen import generate_battle_image
+from core.skills import create_skill_instance, BattleContext
 
 class Battle(commands.Cog):
     def __init__(self, bot):
@@ -21,32 +22,22 @@ class Battle(commands.Cog):
                 "SELECT slot_1, slot_2, slot_3, slot_4, slot_5 FROM teams WHERE user_id = $1", 
                 str(user_id)
             )
-            if not team_row:
-                return []
+            if not team_row: return []
 
-            # Explicitly capture slot IDs in the order of slot_1 to slot_5
             slot_ids = [team_row[f'slot_{i}'] for i in range(1, 6) if team_row[f'slot_{i}']]
-            if not slot_ids:
-                return []
+            if not slot_ids: return []
 
             chars = await conn.fetch("""
                 SELECT 
-                    i.id, 
-                    c.anilist_id,
-                    c.name, 
+                    i.id, c.anilist_id, c.name, 
                     FLOOR(c.true_power * (1 + (COALESCE(i.dupe_level, 0) * 0.05)) * (1 + (COALESCE(u.team_level, 1) * 0.01)))::int as true_power, 
-                    i.dupe_level, -- FETCH THIS FIELD FOR THE IMAGE GEN
-                    c.ability_tags, 
-                    c.rarity, 
-                    c.rank, 
-                    c.image_url 
+                    i.dupe_level, c.ability_tags, c.rarity, c.rank, c.image_url 
                 FROM inventory i 
                 JOIN characters_cache c ON i.anilist_id = c.anilist_id
                 LEFT JOIN users u ON i.user_id = u.user_id 
                 WHERE i.id = ANY($1)
             """, slot_ids)
             
-            # Reorder character data to strictly match the slot sequence
             char_map = {c['id']: dict(c) for c in chars}
             return [char_map[sid] for sid in slot_ids if sid in char_map]
 
@@ -65,7 +56,6 @@ class Battle(commands.Cog):
         
         for rarity, min_rank, max_rank in setup:
             rank = random.randint(min_rank, max_rank)
-            # Mock power calculation for NPCs
             mock_favs = int(600000 / (rank**0.5)) 
             power = calculate_effective_power(mock_favs, rarity, rank)
             team.append({
@@ -109,178 +99,110 @@ class Battle(commands.Cog):
 
         loading_msg = await ctx.reply("⚔️ **The battle is commencing...**")
 
-        # --- INITIALIZATION ---
-        atk_slot_logs = {i: [] for i in range(len(attacker_team))}
-        def_slot_logs = {i: [] for i in range(len(defender_team))}
-        atk_misc_logs, def_misc_logs = [], [] 
+        # --- 1. INITIALIZE ENGINE ---
+        battle_ctx = BattleContext(attacker_team, defender_team)
+        all_skills = []
 
-        # 1. ZODIAC ROLLS FIRST
-        def pre_battle_phase(team, opp_team, slot_logs):
-            zodiac_effects = []
+        def load_skills(team, side):
             for i, char in enumerate(team):
+                if not char: continue
                 tags = char.get('ability_tags', [])
-                if isinstance(tags, str): tags = json.loads(tags)
-                if "Queen of the Zodiacs" in tags:
-                    eff, log = SkillHandler.handle_zodiac_roll(char, team, opp_team)
-                    zodiac_effects.append((i, eff))
-                    slot_logs[i].append(log)
-            return zodiac_effects
-
-        atk_z_effects = pre_battle_phase(attacker_team, defender_team, atk_slot_logs)
-        def_z_effects = pre_battle_phase(defender_team, attacker_team, def_slot_logs)
-
-        # 2. HANDLE DISABLES (Pig + The Onyx Moon)
-        def handle_disables(z_effects, own_team, opp_team, slot_logs):
-            suppressed = set()
-            debuffs = {} # {opp_unit_index: multiplier}
-
-            # Helper to get all enemy (index, skill) pairs
-            enemy_skills = []
-            for i, c in enumerate(opp_team):
-                if not c: continue
-                tags = c.get('ability_tags', [])
                 if isinstance(tags, str): tags = json.loads(tags)
                 for tag in tags:
-                    if tag not in ["Queen of the Zodiacs"]: 
-                        enemy_skills.append((i, tag))
-            
-            # --- Pig Logic ---
-            for idx, eff in z_effects:
-                if eff.get("disable_random_opp_skill"):
-                    if enemy_skills:
-                        # Pick a random skill type from the pool
-                        _, target_skill = random.choice(enemy_skills)
-                        suppressed.add(target_skill)
-                        slot_logs[idx][-1] = f"👑 **{own_team[idx]['name']}** invoked the **Pig** Zodiac: Muddied the waters, disabling **{target_skill}**!"
+                    skill = create_skill_instance(tag, char, i, side)
+                    if skill: all_skills.append(skill)
 
-            # --- Onyx Moon Logic ---
-            for idx, char in enumerate(own_team):
-                tags = char.get('ability_tags', [])
-                if isinstance(tags, str): tags = json.loads(tags)
-                
-                # Note: Onyx Moon is an "always on" start-of-battle effect, similar to Zodiacs
-                if "The Onyx Moon" in tags:
-                    if not enemy_skills:
-                        slot_logs[idx].append(f"🌑 **{char['name']}** cast **The Onyx Moon**, but there were no skills to silence.")
-                        continue
+        load_skills(attacker_team, "attacker")
+        load_skills(defender_team, "defender")
 
-                    target_idx, target_skill = random.choice(enemy_skills)
-                    suppressed.add(target_skill)
-                    
-                    # Check for Coco (ID 129840)
-                    has_coco = any(c.get('anilist_id') == 129840 for c in own_team if c)
-                    
-                    if has_coco:
-                        # Eclipse: Silence + 25% Power Loss
-                        debuffs[target_idx] = debuffs.get(target_idx, 1.0) * 0.75
-                        slot_logs[idx].append(f"🌑 **{char['name']}** cast **Eclipse** (w/ Coco)! Silenced **{target_skill}** and drained **{opp_team[target_idx]['name']}** (-25% Power).")
-                    else:
-                        # Umbra: Silence Only
-                        slot_logs[idx].append(f"🌑 **{char['name']}** cast **Umbra**! Silenced **{target_skill}**.")
+        # --- 2. PHASE: START OF BATTLE ---
+        # (Zodiacs, Disables, Kamikaze, Team Debuffs)
+        for skill in all_skills:
+            await skill.on_battle_start(battle_ctx)
 
-            return list(suppressed), debuffs
+        # --- 3. PHASE: CALCULATION ---
+        final_powers = {"attacker": [], "defender": []}
 
-        atk_suppressed, atk_debuffs_on_def = handle_disables(atk_z_effects, attacker_team, defender_team, atk_slot_logs)
-        def_suppressed, def_debuffs_on_atk = handle_disables(def_z_effects, defender_team, attacker_team, def_slot_logs)
-
-        # 3. GET ACTIVE SKILLS (Accounting for suppression)
-        atk_active_skills = SkillHandler.get_active_skills(attacker_team, suppressed_skills=def_suppressed)
-        def_active_skills = SkillHandler.get_active_skills(defender_team, suppressed_skills=atk_suppressed)
-
-        # 4. Handle Kamikaze
-        atk_ignored, k_logs_a = SkillHandler.handle_kamikaze(defender_team, atk_active_skills)
-        def_ignored, k_logs_d = SkillHandler.handle_kamikaze(attacker_team, def_active_skills)
-        atk_misc_logs.extend(k_logs_a)
-        def_misc_logs.extend(k_logs_d)
-
-        # 5. Final Power Calculation
-        def calculate_total_team_power(team, ignored, z_effects, opp_team, slot_logs, misc_logs, enemy_skills, own_suppressed, enemy_suppressed, incoming_debuffs):
-            team_multiplier = 1.0
-            temp_powers = []
-            
+        # Calculate Individual Powers (Base * Mods * Context)
+        for side in ["attacker", "defender"]:
+            team = battle_ctx.get_team(side)
             for i, char in enumerate(team):
-                if i in ignored:
-                    temp_powers.append(0)
+                if not char: 
+                    final_powers[side].append(0)
                     continue
                 
-                # Apply suppression to individual skills
-                p, logs = SkillHandler.apply_individual_battle_skills(char['true_power'], char, team_list=team, suppressed_skills=own_suppressed)
-                slot_logs[i].extend(logs)
+                # Base Power
+                p = char['true_power']
                 
-                # Apply Incoming Debuffs (e.g. Eclipse)
-                if i in incoming_debuffs:
-                    p *= incoming_debuffs[i]
+                # Ask skills for multipliers (Only OWN skills)
+                my_skills = [s for s in all_skills if s.side == side and s.idx == i]
+                for s in my_skills:
+                    mod = await s.get_power_modifier(battle_ctx, p)
+                    p *= mod
+
+                # Apply Context Multipliers (Debuffs, Global Buffs)
+                p *= battle_ctx.multipliers[side][i]
+                p += battle_ctx.flat_bonuses[side][i]
+
+                # Apply Variance (unless locked by Dragon Zodiac)
+                if battle_ctx.flags.get("variance_override", {}).get(f"{side}_{i}"):
+                    variance = battle_ctx.flags["variance_override"][f"{side}_{i}"]
+                else:
+                    variance = random.uniform(0.9, 1.1)
                 
-                # Zodiac Self/Team effects
-                variance = random.uniform(0.9, 1.1)
-                for idx, eff in z_effects:
-                    if idx == i:
-                        p *= eff.get("self_mult", 1.0)
-                        if "override_variance" in eff:
-                            variance = eff["override_variance"]
-                    if "team_mult" in eff:
-                        team_multiplier *= eff["team_mult"]
-                
-                temp_powers.append(p * variance)
+                final_powers[side].append(max(0, p * variance))
 
-            # Logic Overrides
-            for idx, eff in z_effects:
-                if eff.get("sheep_logic"):
-                    opp_max = max([oc['true_power'] for oc in opp_team], default=0)
-                    temp_powers[idx] = opp_max
-                if "monkey_target_idx" in eff:
-                    target_idx = eff["monkey_target_idx"]
-                    temp_powers[idx], opp_team[target_idx]['true_power'] = opp_team[target_idx]['true_power'], temp_powers[idx]
-                if eff.get("dog_logic"):
-                    temp_powers[idx] = max(temp_powers)
+        # Post-Calculation Logic (Monkey swap, Dog copy, etc.)
+        for skill in all_skills:
+            await skill.on_post_power_calculation(battle_ctx, final_powers)
 
-            team_total = sum(temp_powers) * team_multiplier
-            # Apply suppression to team-wide mods (like Guard)
-            final_total, team_mods = SkillHandler.apply_team_battle_mods(team_total, team, enemy_skills, suppressed_skills=enemy_suppressed)
-            misc_logs.extend(team_mods)
-            
-            return final_total
+        # Final Summation
+        final_team_totals = {"attacker": 0, "defender": 0}
+        for side in ["attacker", "defender"]:
+            total = sum(final_powers[side])
+            final_team_totals[side] = total
 
-        # Note: def_debuffs_on_atk contains debuffs applied BY defender ON attacker.
-        final_atk_power = calculate_total_team_power(attacker_team, def_ignored, atk_z_effects, defender_team, atk_slot_logs, atk_misc_logs, def_active_skills, atk_suppressed, def_suppressed, def_debuffs_on_atk)
-        final_def_power = calculate_total_team_power(defender_team, atk_ignored, def_z_effects, attacker_team, def_slot_logs, def_misc_logs, atk_active_skills, def_suppressed, atk_suppressed, atk_debuffs_on_def)
-
-        # Flatten logs: Slot 1 -> Slot 5 (Zodiac + Individual combined), then misc team effects
-        atk_logs = [log for i in range(len(attacker_team)) for log in atk_slot_logs[i]] + atk_misc_logs
-        def_logs = [log for i in range(len(defender_team)) for log in def_slot_logs[i]] + def_misc_logs
-
-        # --- OUTCOME ---
-        initial_win = final_atk_power > final_def_power
+        # --- 4. PHASE: OUTCOME ---
+        initial_win = final_team_totals["attacker"] > final_team_totals["defender"]
+        outcome = "WIN" if initial_win else "LOSS"
         
-        # Check for Snake/Revive Logic
-        snake_trap = any(e.get("force_draw_on_loss") for _, e in (atk_z_effects if not initial_win else def_z_effects))
-        outcome, outcome_logs = SkillHandler.handle_revive(initial_win, atk_active_skills, snake_trap)
-        
-        if initial_win:
-            def_logs.extend(outcome_logs)
-        else:
-            atk_logs.extend(outcome_logs)
+        # Check Snake Trap
+        if not initial_win and battle_ctx.flags.get("snake_trap"):
+            outcome = "DRAW"
+            battle_ctx.add_log("attacker", None, "🐍 The **Snake Zodiac** trap triggered! Defeat -> **DRAW**.")
+
+        # Check Revive Skills (Only trigger on LOSS)
+        if outcome == "LOSS":
+             for skill in all_skills:
+                 if skill.side == "attacker":
+                     new_outcome = await skill.on_battle_end(battle_ctx, outcome)
+                     if new_outcome: 
+                         outcome = new_outcome
+                         break
 
         # --- EMBED GENERATION ---
         win_idx = 1 if outcome == "WIN" else (2 if outcome == "LOSS" else 0)
         color = 0x5865F2 if win_idx == 1 else (0xED4245 if win_idx == 2 else 0x979C9F)
         
+        # Flatten logs
+        atk_logs = [l for slot in battle_ctx.logs["attacker"].values() for l in slot] + battle_ctx.misc_logs["attacker"]
+        def_logs = [l for slot in battle_ctx.logs["defender"].values() for l in slot] + battle_ctx.misc_logs["defender"]
+
         embed = discord.Embed(
             title=f"⚔️ {ctx.author.display_name} vs {defender_name}",
             description=f"🏆 **Winner: {'Draw' if win_idx == 0 else (ctx.author.display_name if win_idx == 1 else defender_name)}**",
             color=color
         )
 
-        embed.add_field(name=f"🔵 {ctx.author.display_name}", value=f"Total: **{int(final_atk_power):,}**", inline=True)
-        embed.add_field(name=f"🔴 {defender_name}", value=f"Total: **{int(final_def_power):,}**", inline=True)
+        embed.add_field(name=f"🔵 {ctx.author.display_name}", value=f"Total: **{int(final_team_totals['attacker']):,}**", inline=True)
+        embed.add_field(name=f"🔴 {defender_name}", value=f"Total: **{int(final_team_totals['defender']):,}**", inline=True)
 
         if atk_logs:
             embed.add_field(name="🔹 Attacker Highlights", value="\n".join(atk_logs[:10]), inline=False)
         if def_logs:
             embed.add_field(name="🔸 Defender Highlights", value="\n".join(def_logs[:10]), inline=False)
 
-        # Image
-        # --- TASK PROGRESS ---
+        # Task Progress
         pool = await get_db_pool()
         await pool.execute("""
             INSERT INTO daily_tasks (user_id, task_key, progress, last_updated, is_claimed)
