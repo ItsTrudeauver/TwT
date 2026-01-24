@@ -272,5 +272,55 @@ class Admin(commands.Cog):
             
             await ctx.reply(f"✅ **{name}** (ID: {anilist_id}) overridden to **{rarity}** with **{power:,} Power**.")
 
+    @commands.command(name="apologems")
+    @commands.is_owner()
+    async def apologems(self, ctx, amount: int, *, reason: str = "Compensation"):
+        """
+        (Owner Only) Sends gems to ALL registered users.
+        Usage: !apologems <amount> [reason]
+        """
+        if amount <= 0:
+            return await ctx.reply("❌ Amount must be positive.")
+
+        # Confirmation step to prevent accidents
+        confirm_msg = await ctx.reply(f"⚠️ **WARNING:** You are about to send **{amount:,} Gems** to **EVERYONE**.\nReason: *{reason}*\n\nType `confirm` to proceed.")
+
+        def check(m):
+            return m.author == ctx.author and m.channel == ctx.channel and m.content.lower() == "confirm"
+
+        try:
+            await self.bot.wait_for("message", check=check, timeout=15.0)
+        except asyncio.TimeoutError:
+            return await confirm_msg.edit(content="❌ **Cancelled.** Time limit exceeded.")
+
+        # Execution
+        start_time = time.time()
+        loading = await ctx.reply("🔄 *Distributing compensation... (This may take a moment)*")
+        
+        pool = await get_db_pool()
+        
+        # We use execute to update all rows at once.
+        # This is much faster than looping through users.
+        result = await pool.execute("UPDATE users SET gacha_gems = gacha_gems + $1", amount)
+        
+        # 'result' usually comes back as "UPDATE <count>" (e.g., "UPDATE 150")
+        try:
+            count = int(result.split(" ")[-1])
+        except:
+            count = "Unknown"
+
+        total_distributed = amount * (count if isinstance(count, int) else 0)
+        elapsed = time.time() - start_time
+
+        embed = discord.Embed(title=f"{Emotes.GEMS} Gems Distributed", color=0x00FF00)
+        embed.add_field(name="Amount Per User", value=f"**{amount:,}** {Emotes.GEMS}", inline=True)
+        embed.add_field(name="Total Users", value=f"{count}", inline=True)
+        embed.add_field(name="Total Distributed", value=f"{total_distributed:,} {Emotes.GEMS}", inline=False)
+        embed.add_field(name="Reason", value=reason, inline=False)
+        embed.set_footer(text=f"Completed in {elapsed:.2f}s")
+
+        await loading.delete()
+        await ctx.reply(embed=embed)
+
 async def setup(bot):
     await bot.add_cog(Admin(bot))
