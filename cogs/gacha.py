@@ -281,7 +281,7 @@ class Gacha(commands.Cog):
                 embed = discord.Embed(color=0x2ECC71)
                 
                 # Title format: Spark Status
-                embed.title = f"🎰 10x Pull | {spark_status}"
+                embed.title = f"{spark_status}"
                 
                 embed.set_image(url="attachment://10pull.png")
                 
