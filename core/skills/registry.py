@@ -9,8 +9,8 @@ from .implementations import (
 # If a class isn't specified, it defaults to SimpleBuffSkill (or just ignores if logic not needed)
 SKILL_DATA = {
     "The Onyx Moon": {
-        "description": "Casts Umbra: disable one random enemy skill. If Coco is present, casts Eclipse instead: The unit with the disabled skill also loses 25% power.",
-        "value": [129840, 0.25],
+        "description": "Casts Umbra: disable one random enemy skill. If Coco is present, casts Eclipse instead: The unit with the disabled skill also loses 20% power.",
+        "value": [129840, 0.20],
         "applies_in": "b",
         "stackable": False,
         "overlap": False,
@@ -25,16 +25,16 @@ SKILL_DATA = {
         "class": AmberSunSkill
     },
     "Eternity": {
-        "description": "If Himmel is present, this unit gains 10% power.",
-        "value": [184311, 0.1],
+        "description": "If Himmel is present, this unit gains 18% power.",
+        "value": [184311, 0.18],
         "applies_in": "b",
         "stackable": False,
         "overlap": False,
         "class": EternitySkill
     },
     "Ephemerality": {
-        "description": "If Frieren is present, this team gains 2.5% power.",
-        "value": [176754, 0.025],
+        "description": "If Frieren is present, this team gains 3.5% power.",
+        "value": [176754, 0.035],
         "applies_in": "b",
         "stackable": False,
         "overlap": False,
@@ -42,7 +42,7 @@ SKILL_DATA = {
     },
     "Queen of the Zodiacs": {
         "description": "Trigger 1 random effect at the start of the battle: Rat, Ox, Tiger, Rabbit, Dragon, Snake, Horse, Sheep, Monkey, Rooster, Dog, Pig. \nRat: Increase self-power by 20%.\n Ox: Decrease one opponent character's power by 15%. \n Tiger: Increase team power by 5%. \n Rabbit: Decrease opponent team power by 7%. \n Dragon: This character defaults to highest possible variance point (1.1). \n Snake: When losing battle, draw instead. \n Horse: Decrease this character's power by 10%. Increase a random teammate's power by 20%. \n Sheep: Turn opponent's highest power character's power to this unit's power for this battle. \n Monkey: Swap this character's power with a random opponent's character for this battle. \n Rooster: Increase all allies' power by 3% and this character's power by 6%. \n Dog: Copy your strongest character's power to this character for this battle. \n Pig: Disable one random skill from opponent team for this battle.",
-        "value": [0.2, 0.15, 0.05, 0.07, 1.1, 0, [0.1, 0.2], [0.03, 0.06]],
+        "value": [0.2, 0.15, 0.05, 0.07, 1.2, 0, [0.1, 0.2], [0.03, 0.06]],
         "applies_in": "b",
         "stackable": False,
         "overlap": False,
