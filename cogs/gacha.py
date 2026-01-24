@@ -47,19 +47,15 @@ class Gacha(commands.Cog):
     async def get_active_banner(self):
         pool = await get_db_pool()
         current_time = int(time.time())
-        # Ensure your 'banners' table has these columns and end_timestamp is a Unix integer
         banner = await pool.fetchrow("SELECT * FROM banners WHERE is_active = TRUE AND end_timestamp > $1 LIMIT 1", current_time)
         
         if not banner:
-            # Auto-close expired banners
             await pool.execute("UPDATE banners SET is_active = FALSE WHERE is_active = TRUE AND end_timestamp <= $1", current_time)
-            print(f"⚠️ [Gacha] No active banner found. (Current Time: {current_time})")
             return None
             
         return banner
 
     async def process_spark_points(self, user_id, banner_id, amount):
-        print(f"🔄 [Spark] Processing {amount} points for User {user_id} on Banner {banner_id}")
         pool = await get_db_pool()
         async with pool.acquire() as conn:
             user = await conn.fetchrow("SELECT banner_points, last_banner_id FROM users WHERE user_id = $1", str(user_id))
@@ -70,7 +66,6 @@ class Gacha(commands.Cog):
             
             # Reset points if banner changed
             if last_id != banner_id:
-                print(f"🔄 [Spark] Banner mismatch ({last_id} vs {banner_id}). Resetting points to 0.")
                 current_points = 0
             
             new_points = current_points + amount
@@ -81,7 +76,6 @@ class Gacha(commands.Cog):
                 WHERE user_id = $3
             """, new_points, banner_id, str(user_id))
             
-            print(f"✅ [Spark] Updated: {current_points} -> {new_points}")
             return new_points
 
     async def fetch_banner_pull(self, session, banner):
@@ -183,7 +177,7 @@ class Gacha(commands.Cog):
                             'id': char['id'],
                             'name': char['name']['full'],
                             'image_url': char['image']['large'],
-                            'favs': char_data['favourites'],
+                            'favs': char['favourites'],
                             'rarity': rarity,
                             'page': page,
                             'true_power': true_p
@@ -220,42 +214,28 @@ class Gacha(commands.Cog):
         if amount not in [1, 10]: return await ctx.reply("❌ Only 1 or 10 pulls allowed.")
         user_data = await get_user(ctx.author.id)
         cost = amount * GEMS_PER_PULL
-        is_free = await Economy.is_free_pull(ctx.author, self.bot)
-
-        # Debug Prints
-        print(f"--- Pull Debug: User {ctx.author.id} ---")
-        print(f"Is Free: {is_free}")
-
-        if not is_free and user_data['gacha_gems'] < cost:
+        
+        # --- REMOVED FREE CHECK: All pulls now cost gems ---
+        if user_data['gacha_gems'] < cost:
             return await ctx.reply(f"❌ Need **{cost:,} {Emotes.GEMS}**. Balance: **{user_data['gacha_gems']:,}**")
 
         loading = await ctx.reply(f"🎰 *Pulling {amount}x...*")
         try:
             banner = await self.get_active_banner()
-            print(f"Active Banner Found: {banner['id'] if banner else 'None'}")
             pool = await get_db_pool()
             
-            # --- CURRENCY & SPARK LOGIC ---
+            # --- DEDUCT GEMS ---
+            await pool.execute("UPDATE users SET gacha_gems = gacha_gems - $1 WHERE user_id = $2", cost, str(ctx.author.id))
+
+            # --- PROCESS SPARK ---
             spark_points_now = 0
             spark_status = ""
 
-            # 1. Fetch current points (for display)
             if banner:
-                user_spark = await pool.fetchrow("SELECT banner_points, last_banner_id FROM users WHERE user_id = $1", str(ctx.author.id))
-                if user_spark and user_spark['last_banner_id'] == banner['id'] and user_spark['banner_points'] is not None:
-                    spark_points_now = user_spark['banner_points']
-            
-            # 2. Consume Gems & Add Points (if not free)
-            if not is_free:
-                await pool.execute("UPDATE users SET gacha_gems = gacha_gems - $1 WHERE user_id = $2", cost, str(ctx.author.id))
-                
-                if banner:
-                    spark_points_now = await self.process_spark_points(ctx.author.id, banner['id'], amount)
-                    spark_status = f"{Emotes.SPARK} **Spark:** {spark_points_now}/200"
-                else:
-                    spark_status = "⚠️ Standard Pool (No Spark)"
+                spark_points_now = await self.process_spark_points(ctx.author.id, banner['id'], amount)
+                spark_status = f"{Emotes.SPARK} **Spark:** {spark_points_now}/200"
             else:
-                spark_status = "🆓 Free Pull (No Spark)"
+                spark_status = "⚠️ Standard Pool (No Spark)"
 
             # --- API FETCHING ---
             async with aiohttp.ClientSession() as session:
@@ -312,8 +292,6 @@ class Gacha(commands.Cog):
                 await ctx.reply(file=file, embed=embed)
 
         except Exception as e:
-            import traceback
-            traceback.print_exc() # Print full error to console for debugging
             await ctx.reply(f"⚠️ Error: `{e}`")
 
     @commands.command(name="starter")
