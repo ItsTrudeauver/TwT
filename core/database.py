@@ -57,6 +57,8 @@ async def init_db():
             )
         """)
 
+        await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS banner_points INTEGER DEFAULT 0;")
+        await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_banner_id INTEGER DEFAULT -1;")
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS team_level INTEGER DEFAULT 1;")
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS team_xp INTEGER DEFAULT 0;")
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_boat_pulls INTEGER DEFAULT 0;")

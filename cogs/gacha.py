@@ -64,6 +64,32 @@ class Gacha(commands.Cog):
             
         return banner
 
+    async def process_spark_points(self, user_id, banner_id, amount):
+        """
+        Adds spark points. Resets them if the banner ID has changed.
+        """
+        pool = await get_db_pool()
+        async with pool.acquire() as conn:
+            user = await conn.fetchrow("SELECT banner_points, last_banner_id FROM users WHERE user_id = $1", str(user_id))
+            
+            current_points = user['banner_points'] if user else 0
+            last_id = user['last_banner_id'] if user else -1
+            
+            # If banner changed (or user has no history), reset points
+            if last_id != banner_id:
+                current_points = 0
+            
+            # Add new points
+            new_points = current_points + amount
+            
+            await conn.execute("""
+                UPDATE users 
+                SET banner_points = $1, last_banner_id = $2 
+                WHERE user_id = $3
+            """, new_points, banner_id, str(user_id))
+            
+            return new_points
+
     async def fetch_banner_pull(self, session, banner):
         """
         If a user rolls SSR/SR, check if they get a banner unit.
@@ -191,7 +217,6 @@ class Gacha(commands.Cog):
     @commands.command(name="banner")
     async def current_banner(self, ctx):
         """Displays the currently active gacha banner."""
-        # 1. Retrieve the active banner record from the database
         banner = await self.get_active_banner()
         if not banner:
             return await ctx.reply("🎫 No banner is currently active.")
@@ -199,17 +224,13 @@ class Gacha(commands.Cog):
         loading = await ctx.reply("🔍 *Retrieving banner details...*")
         
         try:
-            # 2. Fetch metadata (especially image URLs) for each rate-up ID
             async with aiohttp.ClientSession() as session:
                 tasks = [self.fetch_character_by_id(session, cid) for cid in banner['rate_up_ids']]
-                # fetch_character_by_id returns a dict with 'image_url'
                 character_list = [c for c in await asyncio.gather(*tasks) if c]
 
             if not character_list:
                 return await loading.edit(content="❌ Could not fetch character data from the API.")
 
-            # 3. Generate the image using the existing image_gen utility
-            # Ensure generate_banner_image is imported from core.image_gen
             from core.image_gen import generate_banner_image
             img_output = await generate_banner_image(
                 character_list, 
@@ -217,14 +238,13 @@ class Gacha(commands.Cog):
                 banner['end_timestamp']
             )
             
-            # 4. Clean up and send the image
             await loading.delete()
             await ctx.reply(file=discord.File(fp=img_output, filename="banner.png"))
             
         except Exception as e:
             await ctx.reply(f"⚠️ Error displaying banner: `{e}`")
         
-    @commands.command(name="pull")
+    @commands.command(name="pull", aliases=["summon"])
     async def pull_character(self, ctx, amount: int = 1):
         if amount not in [1, 10]: return await ctx.reply("❌ Only 1 or 10 pulls allowed.")
         user_data = await get_user(ctx.author.id)
@@ -237,9 +257,15 @@ class Gacha(commands.Cog):
         loading = await ctx.reply(f"🎰 *Pulling {amount}x...*")
         try:
             banner = await self.get_active_banner()
+            spark_points_now = 0
+            
             if not is_free:
                 pool = await get_db_pool()
                 await pool.execute("UPDATE users SET gacha_gems = gacha_gems - $1 WHERE user_id = $2", cost, str(ctx.author.id))
+                
+                # --- SPARK SYSTEM ---
+                if banner:
+                    spark_points_now = await self.process_spark_points(ctx.author.id, banner['id'], amount)
 
             async with aiohttp.ClientSession() as session:
                 tasks = []
@@ -254,12 +280,17 @@ class Gacha(commands.Cog):
             if not pulled_chars: return await loading.edit(content="❌ Database/API Error.")
 
             await batch_cache_characters(pulled_chars)
-            # Pass full objects to handle scrap logic
             scrapped_gems = await batch_add_to_inventory(ctx.author.id, pulled_chars)
+            
+            # --- FOOTER TEXT ---
+            footer_text = ""
+            if banner and not is_free:
+                # Use Emotes.SPARK if available, else a star
+                spark_emote = getattr(Emotes, "SPARK", "✨") 
+                footer_text = f"{spark_emote} Spark Points: {spark_points_now}/200"
 
             if amount == 1:
                 c = pulled_chars[0]
-                # Fetch new dupe level to show "Boosted Power"
                 pool = await get_db_pool()
                 row = await pool.fetchrow("SELECT dupe_level FROM inventory WHERE user_id = $1 AND anilist_id = $2", str(ctx.author.id), c['id'])
                 dupe_lv = row['dupe_level'] if row else 0
@@ -271,13 +302,24 @@ class Gacha(commands.Cog):
                 
                 embed = discord.Embed(title=f"✨ {c['name']}", description=desc, color=0xFFD700)
                 embed.set_image(url=c['image_url'])
+                if footer_text: embed.set_footer(text=footer_text)
+                
                 await loading.delete()
                 await ctx.reply(embed=embed)
             else:
                 img = await generate_10_pull_image(pulled_chars)
                 await loading.delete()
+                
                 msg = f"♻️ **Auto-scrapped extras for {scrapped_gems:,} {Emotes.GEMS}!**" if scrapped_gems > 0 else ""
-                await ctx.reply(content=msg, file=discord.File(fp=img, filename="10pull.png"))
+                
+                # Create a simple embed just to show the spark footer if using image
+                if footer_text:
+                    embed = discord.Embed(color=0x2ECC71)
+                    embed.set_footer(text=footer_text)
+                    if msg: embed.description = msg
+                    await ctx.reply(file=discord.File(fp=img, filename="10pull.png"), embed=embed)
+                else:
+                    await ctx.reply(content=msg, file=discord.File(fp=img, filename="10pull.png"))
 
         except Exception as e:
             await ctx.reply(f"⚠️ Error: `{e}`")
@@ -300,7 +342,6 @@ class Gacha(commands.Cog):
             if len(chars) < 10: return await loading.edit(content="❌ Sync Error.")
 
             await batch_cache_characters(chars)
-            # Pass full objects to handle potential scrap logic (though unlikely for starter)
             scrapped_gems = await batch_add_to_inventory(ctx.author.id, chars)
             pool = await get_db_pool()
             await pool.execute("UPDATE users SET has_claimed_starter = TRUE WHERE user_id = $1", str(ctx.author.id))

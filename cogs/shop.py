@@ -7,27 +7,18 @@ from core.database import get_db_pool, get_user
 from core.emotes import Emotes
 
 # --- CONFIGURATION ---
-# Add new items here in the future
 STANDARD_ITEMS = [
     {
         "id": "SSR Token",
         "name": "SSR Token",
         "description": "Upgrades an SSR unit by +1 Dupe Level.",
-        "price": 2000,
+        "price": 1000,
         "currency": "coins",  # Use 'coins' or 'gems'
-        "emoji": "<:SSRToken:1464467899346583849>"
+        "emoji": "💎"
     }
-    # Example of a future item:
-    # {
-    #     "id": "Stamina Potion",
-    #     "name": "Stamina Potion", 
-    #     "description": "Restores 50 Expedition Stamina.",
-    #     "price": 100,
-    #     "currency": "gems",
-    #     "emoji": "🧪"
-    # }
 ]
 
+# --- VIEW: CHARACTER SHOP ---
 class ShopView(discord.ui.View):
     def __init__(self, shop_items, bot):
         super().__init__(timeout=60)
@@ -39,10 +30,9 @@ class ShopDropdown(discord.ui.Select):
     def __init__(self, shop_items):
         options = []
         for idx, item in enumerate(shop_items):
-            # We use the index as the unique value to identify the item
             options.append(discord.SelectOption(
                 label=f"{item['name']} ({item['rarity']})",
-                description=f"Base Cost: {item['base_price']:,} Gems",
+                description=f"Base Cost: {item['base_price']:,} {Emotes.GEMS}",
                 value=str(idx),
                 emoji="🪙"
             ))
@@ -50,12 +40,10 @@ class ShopDropdown(discord.ui.Select):
         super().__init__(placeholder="Select a character to buy...", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
-        # 1. Identify Item
         item_index = int(self.values[0])
         target_item = self.view.shop_items[item_index]
         user_id = str(interaction.user.id)
         
-        # 2. Fetch User Data (Balance & Level)
         pool = await get_db_pool()
         user_row = await pool.fetchrow("SELECT gacha_gems, team_level FROM users WHERE user_id = $1", user_id)
         
@@ -65,25 +53,19 @@ class ShopDropdown(discord.ui.Select):
         gems = user_row['gacha_gems']
         level = user_row['team_level'] if user_row['team_level'] else 1
         
-        # 3. Calculate Personalized Price
-        # Level 30 Perk: -25% Cost
         discount_active = level >= 30
         final_price = int(target_item['base_price'] * (0.75 if discount_active else 1.0))
         
-        # 4. Check Funds
         if gems < final_price:
             missing = final_price - gems
             return await interaction.response.send_message(f"❌ You cannot afford this!\nCost: **{final_price:,}** (Short: {missing:,})", ephemeral=True)
             
-        # 5. Process Transaction
         async with pool.acquire() as conn:
-            # Check Inventory for Dupe
             existing = await conn.fetchrow(
                 "SELECT id, dupe_level FROM inventory WHERE user_id = $1 AND anilist_id = $2", 
                 user_id, target_item['anilist_id']
             )
             
-            # Deduct Gems
             await conn.execute("UPDATE users SET gacha_gems = gacha_gems - $1 WHERE user_id = $2", final_price, user_id)
             
             msg = ""
@@ -98,14 +80,12 @@ class ShopDropdown(discord.ui.Select):
                 )
                 msg = f"✅ **Purchased!**\n**{target_item['name']}** added to your inventory!"
 
-            # Add discount note
             if discount_active:
                 msg += f"\n📉 **Level 30 Discount Applied:** Saved {target_item['base_price'] - final_price:,} {Emotes.GEMS}!"
 
             await interaction.response.send_message(msg, ephemeral=False)
 
-# --- ITEM SHOP CLASSES ---
-
+# --- VIEW: ITEM SHOP ---
 class ItemShopView(discord.ui.View):
     def __init__(self, bot):
         super().__init__(timeout=60)
@@ -116,9 +96,7 @@ class ItemShopDropdown(discord.ui.Select):
     def __init__(self):
         options = []
         for item in STANDARD_ITEMS:
-            # Determine emote based on currency
             currency_emote = Emotes.COINS if item['currency'] == 'coins' else Emotes.GEMS
-            
             options.append(discord.SelectOption(
                 label=f"{item['name']}",
                 description=f"Cost: {item['price']:,} {item['currency'].title()}",
@@ -132,36 +110,27 @@ class ItemShopDropdown(discord.ui.Select):
         item_id = self.values[0]
         item_data = next((i for i in STANDARD_ITEMS if i['id'] == item_id), None)
         
-        if not item_data:
-            return await interaction.response.send_message("❌ Error: Item data not found.", ephemeral=True)
+        if not item_data: return await interaction.response.send_message("❌ Error: Item data not found.", ephemeral=True)
 
         user_id = str(interaction.user.id)
         price = item_data['price']
-        currency = item_data['currency'] # 'coins' or 'gems'
+        currency = item_data['currency'] 
         
         pool = await get_db_pool()
-        
-        # 1. Check Balance
-        # We construct the query dynamically based on currency type
         currency_col = "coins" if currency == "coins" else "gacha_gems"
         user_row = await pool.fetchrow(f"SELECT {currency_col} FROM users WHERE user_id = $1", user_id)
         
-        if not user_row:
-             return await interaction.response.send_message("❌ You are not registered.", ephemeral=True)
+        if not user_row: return await interaction.response.send_message("❌ You are not registered.", ephemeral=True)
 
         balance = user_row[currency_col]
+        currency_emote = Emotes.COINS if currency == "coins" else Emotes.GEMS
         
         if balance < price:
-            currency_emote = Emotes.COINS if currency == "coins" else Emotes.GEMS
             return await interaction.response.send_message(f"❌ You need **{price:,} {currency_emote}** to buy this.", ephemeral=True)
 
-        # 2. Process Transaction
         async with pool.acquire() as conn:
             async with conn.transaction():
-                # Deduct Currency
                 await conn.execute(f"UPDATE users SET {currency_col} = {currency_col} - $1 WHERE user_id = $2", price, user_id)
-                
-                # Add Item
                 await conn.execute("""
                     INSERT INTO user_items (user_id, item_id, quantity) 
                     VALUES ($1, $2, 1)
@@ -171,20 +140,37 @@ class ItemShopDropdown(discord.ui.Select):
         
         await interaction.response.send_message(f"✅ Purchased **{item_data['name']}** for **{price:,}**!", ephemeral=False)
 
+# --- VIEW: SPARK SELECTION ---
+class SparkSelectionView(discord.ui.View):
+    def __init__(self, ctx, rate_up_ids, cost, bot):
+        super().__init__(timeout=60)
+        self.ctx = ctx
+        self.cost = cost
+        self.add_item(SparkSelect(rate_up_ids, bot))
+
+class SparkSelect(discord.ui.Select):
+    def __init__(self, rate_up_ids, bot):
+        options = [discord.SelectOption(label=f"Character ID: {uid}", value=str(uid)) for uid in rate_up_ids]
+        super().__init__(placeholder="Choose your Spark...", min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user != self.view.ctx.author: return
+        shop_cog = interaction.client.get_cog("Shop")
+        await shop_cog._process_spark(self.view.ctx, int(self.values[0]), self.view.cost)
+        self.view.stop()
+
 class Shop(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.RATE_UP_IDS = [] 
 
     async def _get_shop_rotation(self):
-        """Fetches or Generates today's shop."""
         today = datetime.datetime.utcnow().strftime("%Y-%m-%d")
         pool = await get_db_pool()
         
         async with pool.acquire() as conn:
             row = await conn.fetchrow("SELECT items FROM daily_shop WHERE date = $1", today)
-            if row:
-                return json.loads(row['items'])
+            if row: return json.loads(row['items'])
             
             all_chars = await conn.fetch("SELECT anilist_id, name, rarity, image_url FROM characters_cache")
             if not all_chars: return [] 
@@ -225,8 +211,7 @@ class Shop(commands.Cog):
     async def view_shop(self, ctx):
         """Opens the Daily Character Shop."""
         items = await self._get_shop_rotation()
-        if not items:
-            return await ctx.reply("⚠️ The shop is currently empty.")
+        if not items: return await ctx.reply("⚠️ The shop is currently empty.")
 
         user = await get_user(ctx.author.id)
         user_level = user.get('team_level', 1)
@@ -291,25 +276,18 @@ class Shop(commands.Cog):
     @commands.command(name="buy_token")
     async def buy_ssr_token(self, ctx):
         """Quick command to buy an SSR Token."""
-        # Find token data in standard items
         token_data = next((i for i in STANDARD_ITEMS if i['id'] == 'SSR Token'), None)
+        if not token_data: return await ctx.reply("❌ SSR Token is currently not available.")
         
-        if not token_data:
-            return await ctx.reply("❌ SSR Token is currently not available.")
-            
         price = token_data['price']
-        
         pool = await get_db_pool()
         user = await pool.fetchrow("SELECT coins FROM users WHERE user_id = $1", str(ctx.author.id))
         if not user or user['coins'] < price:
-            return await ctx.reply(f"❌ You need **{price:,} {Emotes.COINS}** to buy an SSR Token. (Current: {user['coins'] if user else 0})")
+            return await ctx.reply(f"❌ You need **{price:,} {Emotes.COINS}** to buy an SSR Token.")
 
         async with pool.acquire() as conn:
             async with conn.transaction():
-                # Deduct Coins
                 await conn.execute("UPDATE users SET coins = coins - $1 WHERE user_id = $2", price, str(ctx.author.id))
-                
-                # Upsert the item
                 await conn.execute("""
                     INSERT INTO user_items (user_id, item_id, quantity) 
                     VALUES ($1, 'SSR Token', 1)
@@ -317,7 +295,58 @@ class Shop(commands.Cog):
                     DO UPDATE SET quantity = user_items.quantity + 1
                 """, str(ctx.author.id))
                 
-        await ctx.reply(f"✅ Purchased **1 SSR Token** for {price:,} {Emotes.COINS}!\nUse it with `!use_token <InventoryID>`.")
+        await ctx.reply(f"✅ Purchased **1 SSR Token** for {price:,} {Emotes.COINS}!")
+
+    @commands.command(name="spark", aliases=["pity_exchange"])
+    async def spark_exchange(self, ctx):
+        """Exchange 200 Banner Points for a Rate-Up SSR."""
+        SPARK_COST = 200
+        pool = await get_db_pool()
+        
+        current_time = int(datetime.datetime.utcnow().timestamp())
+        banner = await pool.fetchrow("SELECT * FROM banners WHERE is_active = TRUE AND end_timestamp > $1 LIMIT 1", current_time)
+        
+        spark_emote = getattr(Emotes, "SPARK", "✨") 
+
+        if not banner:
+            return await ctx.reply("❌ There is no active banner to spark from.")
+            
+        rate_up_ids = banner['rate_up_ids']
+        if not rate_up_ids:
+            return await ctx.reply("❌ This banner has no rate-up characters.")
+
+        user = await pool.fetchrow("SELECT banner_points, last_banner_id FROM users WHERE user_id = $1", str(ctx.author.id))
+        
+        # Verify points match the CURRENT banner
+        user_points = user['banner_points'] if user and user['last_banner_id'] == banner['id'] else 0
+        
+        if user_points < SPARK_COST:
+            return await ctx.reply(f"❌ You need **{SPARK_COST}** {spark_emote} Spark Points on *this specific banner*.\n**Current Points:** {user_points}/{SPARK_COST}")
+
+        if len(rate_up_ids) == 1:
+            target_id = rate_up_ids[0]
+            await self._process_spark(ctx, target_id, SPARK_COST)
+        else:
+            view = SparkSelectionView(ctx, rate_up_ids, SPARK_COST, self.bot)
+            await ctx.reply(f"{spark_emote} **Spark Exchange Available!**\nSelect the character you want to claim:", view=view)
+
+    async def _process_spark(self, ctx, char_id, cost):
+        """Internal helper to process the transaction."""
+        pool = await get_db_pool()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                # Deduct Points
+                await conn.execute("UPDATE users SET banner_points = banner_points - $1 WHERE user_id = $2", cost, str(ctx.author.id))
+                
+                # Add Character
+                await conn.execute("""
+                    INSERT INTO inventory (user_id, anilist_id, dupe_level) VALUES ($1, $2, 0)
+                    ON CONFLICT (user_id, anilist_id) 
+                    DO UPDATE SET dupe_level = inventory.dupe_level + 1
+                """, str(ctx.author.id), char_id)
+        
+        spark_emote = getattr(Emotes, "SPARK", "✨") 
+        await ctx.reply(f"{spark_emote} **SPARK SUCCESSFUL!**\nYou exchanged {cost} points for character ID `{char_id}`!")
 
 async def setup(bot):
     await bot.add_cog(Shop(bot))
