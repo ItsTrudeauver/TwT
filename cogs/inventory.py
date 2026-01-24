@@ -257,7 +257,7 @@ class Inventory(commands.Cog):
                 # Upgrade Unit
                 await conn.execute("UPDATE inventory SET dupe_level = dupe_level + 1 WHERE id = $1", char_id)
 
-        await ctx.reply(f"💎 **Success!** Used 1 SSR Token to upgrade **{char_row['name']}** to **Dupe Lv. {char_row['dupe_level'] + 1}**!")
+        await ctx.reply(f"{Emotes.SSRTOKEN} **Success!** Used 1 SSR Token to upgrade **{char_row['name']}** to **Dupe Lv. {char_row['dupe_level'] + 1}**!")
 
 async def setup(bot):
     await bot.add_cog(Inventory(bot))

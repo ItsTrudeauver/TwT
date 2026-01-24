@@ -15,7 +15,7 @@ STANDARD_ITEMS = [
         "description": "Upgrades an SSR unit by +1 Dupe Level.",
         "price": 1000,
         "currency": "coins",  # Use 'coins' or 'gems'
-        "emoji": "💎"
+        "emoji": "<:SSRToken:1464467899346583849>"
     }
     # Example of a future item:
     # {
