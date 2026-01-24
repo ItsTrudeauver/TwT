@@ -285,7 +285,6 @@ class Gacha(commands.Cog):
             # --- FOOTER TEXT ---
             footer_text = ""
             if banner and not is_free:
-                # Use Emotes.SPARK if available, else a star
                 spark_emote = getattr(Emotes, "SPARK", "✨") 
                 footer_text = f"{spark_emote} Spark Points: {spark_points_now}/200"
 
@@ -312,7 +311,6 @@ class Gacha(commands.Cog):
                 
                 msg = f"♻️ **Auto-scrapped extras for {scrapped_gems:,} {Emotes.GEMS}!**" if scrapped_gems > 0 else ""
                 
-                # Create a simple embed just to show the spark footer if using image
                 if footer_text:
                     embed = discord.Embed(color=0x2ECC71)
                     embed.set_footer(text=footer_text)
@@ -332,7 +330,6 @@ class Gacha(commands.Cog):
         loading = await ctx.reply("🎁 *Opening Starter Pack...*")
         try:
             async with aiohttp.ClientSession() as session:
-                # 1 Guaranteed SSR + 9 Random
                 tasks = [self.fetch_character_by_rank(session, *self.get_rarity_and_page(guaranteed_ssr=True))]
                 for _ in range(9):
                     tasks.append(self.fetch_character_by_rank(session, *self.get_rarity_and_page()))

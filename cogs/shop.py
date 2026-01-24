@@ -13,7 +13,7 @@ STANDARD_ITEMS = [
         "name": "SSR Token",
         "description": "Upgrades an SSR unit by +1 Dupe Level.",
         "price": 1000,
-        "currency": "coins",  # Use 'coins' or 'gems'
+        "currency": "coins",  
         "emoji": "💎"
     }
 ]
@@ -150,8 +150,10 @@ class SparkSelectionView(discord.ui.View):
 
 class SparkSelect(discord.ui.Select):
     def __init__(self, rate_up_ids, bot):
+        # We display the ID in the label. 
+        # In a real scenario, you might want to fetch names here, but IDs are safer for now.
         options = [discord.SelectOption(label=f"Character ID: {uid}", value=str(uid)) for uid in rate_up_ids]
-        super().__init__(placeholder="Choose your Spark...", min_values=1, max_values=1, options=options)
+        super().__init__(placeholder="Select your Guaranteed SSR...", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
         if interaction.user != self.view.ctx.author: return
@@ -305,7 +307,6 @@ class Shop(commands.Cog):
         
         current_time = int(datetime.datetime.utcnow().timestamp())
         banner = await pool.fetchrow("SELECT * FROM banners WHERE is_active = TRUE AND end_timestamp > $1 LIMIT 1", current_time)
-        
         spark_emote = getattr(Emotes, "SPARK", "✨") 
 
         if not banner:
@@ -315,6 +316,20 @@ class Shop(commands.Cog):
         if not rate_up_ids:
             return await ctx.reply("❌ This banner has no rate-up characters.")
 
+        # --- NEW: FILTER FOR SSR ONLY ---
+        # We need to check which of these IDs are actually SSRs
+        ssr_ids = []
+        async with pool.acquire() as conn:
+            # We query the cache/DB to find rarity
+            rows = await conn.fetch("""
+                SELECT anilist_id FROM characters_cache 
+                WHERE anilist_id = ANY($1) AND rarity = 'SSR'
+            """, rate_up_ids)
+            ssr_ids = [r['anilist_id'] for r in rows]
+
+        if not ssr_ids:
+            return await ctx.reply("❌ There are no SSRs on this banner to spark.")
+
         user = await pool.fetchrow("SELECT banner_points, last_banner_id FROM users WHERE user_id = $1", str(ctx.author.id))
         
         # Verify points match the CURRENT banner
@@ -323,11 +338,12 @@ class Shop(commands.Cog):
         if user_points < SPARK_COST:
             return await ctx.reply(f"❌ You need **{SPARK_COST}** {spark_emote} Spark Points on *this specific banner*.\n**Current Points:** {user_points}/{SPARK_COST}")
 
-        if len(rate_up_ids) == 1:
-            target_id = rate_up_ids[0]
+        if len(ssr_ids) == 1:
+            target_id = ssr_ids[0]
             await self._process_spark(ctx, target_id, SPARK_COST)
         else:
-            view = SparkSelectionView(ctx, rate_up_ids, SPARK_COST, self.bot)
+            # Pass ONLY the SSR IDs to the view
+            view = SparkSelectionView(ctx, ssr_ids, SPARK_COST, self.bot)
             await ctx.reply(f"{spark_emote} **Spark Exchange Available!**\nSelect the character you want to claim:", view=view)
 
     async def _process_spark(self, ctx, char_id, cost):
