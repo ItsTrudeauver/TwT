@@ -21,7 +21,6 @@ class Gacha(commands.Cog):
         self.load_rankings()
 
     def load_rankings(self):
-        """Loads the scraped ID -> Rank map from JSON."""
         try:
             with open("data/rankings.json", "r") as f:
                 self.rank_map = json.load(f)
@@ -30,10 +29,6 @@ class Gacha(commands.Cog):
             print("⚠️ [Gacha] 'data/rankings.json' not found. Please run scripts/update_ranks.py")
 
     def get_cached_rank(self, anilist_id):
-        """
-        Returns the exact rank from the JSON file.
-        If the character isn't in the top 10,000, we treat them as Rank 10,001.
-        """
         return self.rank_map.get(str(anilist_id), 10001)
 
     def determine_rarity(self, rank):
@@ -42,15 +37,11 @@ class Gacha(commands.Cog):
         return "R"
 
     def get_rarity_and_page(self, guaranteed_ssr=False):
-        """
-        Determines which 'Page' (Rank) to pull from.
-        """
         if guaranteed_ssr: return "SSR", random.randint(1, 250)
         
         roll = random.random() * 100
         if roll < 2:  return "SSR", random.randint(1, 250)
         if roll < 13: return "SR", random.randint(251, 1500)
-        # Pulls from the remainder of your 10k database
         return "R", random.randint(1501, 10000)
 
     async def get_active_banner(self):
@@ -58,16 +49,12 @@ class Gacha(commands.Cog):
         current_time = int(time.time())
         banner = await pool.fetchrow("SELECT * FROM banners WHERE is_active = TRUE AND end_timestamp > $1 LIMIT 1", current_time)
         
-        # Auto-close expired banners
         if not banner:
             await pool.execute("UPDATE banners SET is_active = FALSE WHERE is_active = TRUE AND end_timestamp <= $1", current_time)
             
         return banner
 
     async def process_spark_points(self, user_id, banner_id, amount):
-        """
-        Adds spark points. Resets them if the banner ID has changed.
-        """
         pool = await get_db_pool()
         async with pool.acquire() as conn:
             user = await conn.fetchrow("SELECT banner_points, last_banner_id FROM users WHERE user_id = $1", str(user_id))
@@ -75,11 +62,9 @@ class Gacha(commands.Cog):
             current_points = user['banner_points'] if user else 0
             last_id = user['last_banner_id'] if user else -1
             
-            # If banner changed (or user has no history), reset points
             if last_id != banner_id:
                 current_points = 0
             
-            # Add new points
             new_points = current_points + amount
             
             await conn.execute("""
@@ -91,14 +76,10 @@ class Gacha(commands.Cog):
             return new_points
 
     async def fetch_banner_pull(self, session, banner):
-        """
-        If a user rolls SSR/SR, check if they get a banner unit.
-        """
         rarity, page = self.get_rarity_and_page()
         
         if rarity in ["SSR", "SR"] and random.random() < banner['rate_up_chance']:
             pool = await get_db_pool()
-            # Find banner IDs that match the rolled rarity
             possible_hits = await pool.fetch("""
                 SELECT anilist_id FROM characters_cache 
                 WHERE anilist_id = ANY($1) AND rarity = $2
@@ -106,17 +87,11 @@ class Gacha(commands.Cog):
             
             if possible_hits:
                 target_id = random.choice(possible_hits)['anilist_id']
-                # Fetch specific ID using our JSON lookup
                 return await self.fetch_character_by_id(session, target_id)
 
-        # Fallback to random pull
         return await self.fetch_character_by_rank(session, rarity, page)
 
     async def fetch_character_by_id(self, session, anilist_id: int, forced_rarity=None):
-        """
-        Fetches character metadata (Name/Image) from API, 
-        but gets Rank/Rarity/Power directly from JSON.
-        """
         query = """
         query ($id: Int) {
             Character(id: $id) {
@@ -135,16 +110,13 @@ class Gacha(commands.Cog):
 
                 char_data = data['data']['Character']
                 
-                # --- BACKWARDS LOOKUP ---
                 if forced_rarity:
                     rarity = forced_rarity
                     rank = 1 if rarity == "SSR" else 500
                 else:
-                    # Look up the ID in our JSON map
                     rank = self.get_cached_rank(anilist_id)
                     rarity = self.determine_rarity(rank)
                 
-                # Check for existing manual override in DB
                 pool = await get_db_pool()
                 override = await pool.fetchrow("SELECT rarity, true_power, is_overridden FROM characters_cache WHERE anilist_id = $1", char_data['id'])
                 
@@ -168,10 +140,6 @@ class Gacha(commands.Cog):
             return None
 
     async def fetch_character_by_rank(self, session, rarity, page):
-        """
-        Fetches a character by their Rank (Page) from AniList.
-        Double-checks the rank against our JSON to be consistent.
-        """
         query = """
         query ($page: Int) {
             Page(page: $page, perPage: 1) {
@@ -191,8 +159,6 @@ class Gacha(commands.Cog):
                     chars = data.get('data', {}).get('Page', {}).get('characters', [])
                     if chars:
                         char = chars[0]
-                        
-                        # Check for existing manual override in DB
                         pool = await get_db_pool()
                         override = await pool.fetchrow("SELECT rarity, true_power, is_overridden FROM characters_cache WHERE anilist_id = $1", char['id'])
                         
@@ -222,7 +188,6 @@ class Gacha(commands.Cog):
             return await ctx.reply("🎫 No banner is currently active.")
 
         loading = await ctx.reply("🔍 *Retrieving banner details...*")
-        
         try:
             async with aiohttp.ClientSession() as session:
                 tasks = [self.fetch_character_by_id(session, cid) for cid in banner['rate_up_ids']]
@@ -232,15 +197,10 @@ class Gacha(commands.Cog):
                 return await loading.edit(content="❌ Could not fetch character data from the API.")
 
             from core.image_gen import generate_banner_image
-            img_output = await generate_banner_image(
-                character_list, 
-                banner['name'], 
-                banner['end_timestamp']
-            )
+            img_output = await generate_banner_image(character_list, banner['name'], banner['end_timestamp'])
             
             await loading.delete()
             await ctx.reply(file=discord.File(fp=img_output, filename="banner.png"))
-            
         except Exception as e:
             await ctx.reply(f"⚠️ Error displaying banner: `{e}`")
         
@@ -257,16 +217,26 @@ class Gacha(commands.Cog):
         loading = await ctx.reply(f"🎰 *Pulling {amount}x...*")
         try:
             banner = await self.get_active_banner()
+            pool = await get_db_pool()
+            
+            # --- CURRENCY & SPARK LOGIC ---
             spark_points_now = 0
             
+            # 1. Fetch current points (for display) even if free
+            if banner:
+                user_spark = await pool.fetchrow("SELECT banner_points, last_banner_id FROM users WHERE user_id = $1", str(ctx.author.id))
+                if user_spark and user_spark['last_banner_id'] == banner['id']:
+                    spark_points_now = user_spark['banner_points']
+                else:
+                    spark_points_now = 0 # Will be 0 or reset
+
+            # 2. Consume Gems & Add Points (if not free)
             if not is_free:
-                pool = await get_db_pool()
                 await pool.execute("UPDATE users SET gacha_gems = gacha_gems - $1 WHERE user_id = $2", cost, str(ctx.author.id))
-                
-                # --- SPARK SYSTEM ---
                 if banner:
                     spark_points_now = await self.process_spark_points(ctx.author.id, banner['id'], amount)
 
+            # --- API FETCHING ---
             async with aiohttp.ClientSession() as session:
                 tasks = []
                 for _ in range(amount):
@@ -282,15 +252,15 @@ class Gacha(commands.Cog):
             await batch_cache_characters(pulled_chars)
             scrapped_gems = await batch_add_to_inventory(ctx.author.id, pulled_chars)
             
-            # --- FOOTER TEXT ---
+            # --- FOOTER TEXT GENERATION ---
             footer_text = ""
-            if banner and not is_free:
+            if banner:
                 spark_emote = getattr(Emotes, "SPARK", "✨") 
                 footer_text = f"{spark_emote} Spark Points: {spark_points_now}/200"
 
+            # --- SINGLE PULL RESPONSE ---
             if amount == 1:
                 c = pulled_chars[0]
-                pool = await get_db_pool()
                 row = await pool.fetchrow("SELECT dupe_level FROM inventory WHERE user_id = $1 AND anilist_id = $2", str(ctx.author.id), c['id'])
                 dupe_lv = row['dupe_level'] if row else 0
                 boosted_power = int(c['true_power'] * (1 + (dupe_lv * 0.05)))
@@ -305,19 +275,25 @@ class Gacha(commands.Cog):
                 
                 await loading.delete()
                 await ctx.reply(embed=embed)
+            
+            # --- 10-PULL RESPONSE (FIXED) ---
             else:
                 img = await generate_10_pull_image(pulled_chars)
                 await loading.delete()
                 
-                msg = f"♻️ **Auto-scrapped extras for {scrapped_gems:,} {Emotes.GEMS}!**" if scrapped_gems > 0 else ""
+                # We always create an embed now to hold the image + footer
+                embed = discord.Embed(color=0x2ECC71)
+                embed.set_image(url="attachment://10pull.png")
+                
+                if scrapped_gems > 0:
+                    embed.description = f"♻️ **Auto-scrapped extras for {scrapped_gems:,} {Emotes.GEMS}!**"
                 
                 if footer_text:
-                    embed = discord.Embed(color=0x2ECC71)
                     embed.set_footer(text=footer_text)
-                    if msg: embed.description = msg
-                    await ctx.reply(file=discord.File(fp=img, filename="10pull.png"), embed=embed)
-                else:
-                    await ctx.reply(content=msg, file=discord.File(fp=img, filename="10pull.png"))
+                
+                # Send File + Embed together
+                file = discord.File(fp=img, filename="10pull.png")
+                await ctx.reply(file=file, embed=embed)
 
         except Exception as e:
             await ctx.reply(f"⚠️ Error: `{e}`")
