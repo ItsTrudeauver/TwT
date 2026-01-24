@@ -1,9 +1,28 @@
+# cogs/inventory.py
 import discord
 from discord.ext import commands
+from discord.ui import View, Button
 import math
 import json
-from core.database import get_db_pool, get_user, mass_scrap_r_rarity
+from core.database import get_db_pool, get_user, mass_scrap_r_rarity, mass_scrap_sr_rarity
 from core.emotes import Emotes  # Import Emotes
+
+class ConfirmSRScrap(View):
+    def __init__(self, author):
+        super().__init__(timeout=30)
+        self.author = author
+        self.value = None
+
+    @discord.ui.button(label="⚠️ Confirm Scrap SRs", style=discord.ButtonStyle.danger)
+    async def confirm(self, interaction: discord.Interaction, button: Button):
+        if interaction.user != self.author: return
+        self.value = True
+        self.stop()
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: Button):
+        self.value = False
+        self.stop()
 
 class InventoryView(discord.ui.View):
     def __init__(self, bot, user, pool, per_page=10):
@@ -90,7 +109,7 @@ class Inventory(commands.Cog):
     @commands.command(name="gems", aliases=["pc", "wallet", "profile"])
     async def check_balance(self, ctx):
         user_data = await get_user(ctx.author.id)
-        await ctx.reply(f"{ctx.author.mention}, you currently have **{user_data['gacha_gems']:,}** {Emotes.GEMS}")
+        await ctx.reply(f"{ctx.author.mention}, you currently have **{user_data['gacha_gems']:,}** {Emotes.GEMS} and **{user_data.get('coins', 0):,}** {Emotes.COINS}")
 
     @commands.command(name="inventory", aliases=["inv"])
     async def show_inventory(self, ctx):
@@ -158,8 +177,87 @@ class Inventory(commands.Cog):
 
     @commands.command(name="scrap_all", aliases=["mass_scrap"])
     async def scrap_all(self, ctx):
-        count, reward = await mass_scrap_r_rarity(ctx.author.id)
-        await ctx.reply(f"♻️ Scrapped {count} units for {reward:,} {Emotes.GEMS}!" if count > 0 else "❌ No units to scrap.")
+        count, gems, coins = await mass_scrap_r_rarity(ctx.author.id)
+        if count > 0:
+            await ctx.reply(f"♻️ Scrapped **{count}** R units for **{gems:,}** {Emotes.GEMS} and **{coins:,}** {Emotes.COINS}!")
+        else:
+            await ctx.reply("❌ No unlocked R units found.")
+
+    @commands.command(name="scrap_sr")
+    async def scrap_sr_cmd(self, ctx):
+        """Mass scraps unlocked SRs with confirmation."""
+        view = ConfirmSRScrap(ctx.author)
+        msg = await ctx.reply(
+            "⚠️ **WARNING:** This will scrap ALL **unlocked** SR units for 500 Gems + 25 Coins each.\n**Please check if you locked the ones you want to keep!**", 
+            view=view
+        )
+        
+        await view.wait()
+        if view.value:
+            count, gems, coins = await mass_scrap_sr_rarity(ctx.author.id)
+            if count > 0:
+                await msg.edit(content=f"♻️ Scrapped **{count}** SR units for **{gems:,}** {Emotes.GEMS} and **{coins:,}** {Emotes.COINS}!", view=None)
+            else:
+                await msg.edit(content="❌ No unlocked SR units found.", view=None)
+        else:
+            await msg.edit(content="❌ Scrap cancelled.", view=None)
+
+    @commands.command(name="items", aliases=["bag"])
+    async def show_items(self, ctx):
+        """Displays your Coins and Special Items."""
+        pool = await get_db_pool()
+        user_data = await pool.fetchrow("SELECT coins FROM users WHERE user_id = $1", str(ctx.author.id))
+        items = await pool.fetch("SELECT item_id, quantity FROM user_items WHERE user_id = $1 AND quantity > 0", str(ctx.author.id))
+        
+        coins = user_data['coins'] if user_data else 0
+        
+        embed = discord.Embed(title=f"🎒 {ctx.author.display_name}'s Items", color=0x9B59B6)
+        embed.add_field(name="Currency", value=f"{Emotes.COINS} **Coins:** `{coins:,}`", inline=False)
+        
+        if items:
+            item_list = "\n".join([f"• **{r['item_id']}**: `{r['quantity']}`" for r in items])
+        else:
+            item_list = "*No special items owned.*"
+            
+        embed.add_field(name="Consumables", value=item_list, inline=False)
+        await ctx.reply(embed=embed)
+
+    @commands.command(name="use_token")
+    async def use_ssr_token(self, ctx, char_id: int):
+        """Uses an SSR Token to upgrade a specific character."""
+        pool = await get_db_pool()
+        
+        # 1. Check if user has a token
+        token_row = await pool.fetchrow("SELECT quantity FROM user_items WHERE user_id = $1 AND item_id = 'SSR Token'", str(ctx.author.id))
+        if not token_row or token_row['quantity'] < 1:
+            return await ctx.reply(f"❌ You do not have an **SSR Token**! Buy one in the shop.")
+
+        # 2. Check if user owns the character and it is an SSR
+        char_row = await pool.fetchrow("""
+            SELECT i.dupe_level, c.rarity, c.name 
+            FROM inventory i 
+            JOIN characters_cache c ON i.anilist_id = c.anilist_id 
+            WHERE i.user_id = $1 AND i.id = $2
+        """, str(ctx.author.id), char_id)
+
+        if not char_row:
+            return await ctx.reply("❌ Character not found in your inventory.")
+        
+        if char_row['rarity'] != 'SSR':
+            return await ctx.reply("❌ You can only use this token on **SSR** characters.")
+            
+        if char_row['dupe_level'] >= 10:
+            return await ctx.reply("❌ This character is already at Max Dupes (Lv. 10)!")
+
+        # 3. Apply Upgrade
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                # Consume Token
+                await conn.execute("UPDATE user_items SET quantity = quantity - 1 WHERE user_id = $1 AND item_id = 'SSR Token'", str(ctx.author.id))
+                # Upgrade Unit
+                await conn.execute("UPDATE inventory SET dupe_level = dupe_level + 1 WHERE id = $1", char_id)
+
+        await ctx.reply(f"💎 **Success!** Used 1 SSR Token to upgrade **{char_row['name']}** to **Dupe Lv. {char_row['dupe_level'] + 1}**!")
 
 async def setup(bot):
     await bot.add_cog(Inventory(bot))
