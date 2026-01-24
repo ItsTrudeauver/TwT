@@ -72,7 +72,7 @@ class InventoryView(discord.ui.View):
         else:
             for row in rows:
                 lock = "🔒" if row['is_locked'] else ""
-                rarity = "🌟" if row['rarity'] == "SSR" else "✨" if row['rarity'] == "SR" else "⚪"
+                rarity = f"{Emotes.SSR}" if row['rarity'] == "SSR" else f"{Emotes.SR}" if row['rarity'] == "SR" else f"{Emotes.R}"
                 
                 # UPDATED: Add dupe count display next to the name
                 dupe_text = f" (+{row['dupe_level']})" if row['dupe_level'] > 0 else ""
@@ -230,7 +230,7 @@ class Inventory(commands.Cog):
         # 1. Check if user has a token
         token_row = await pool.fetchrow("SELECT quantity FROM user_items WHERE user_id = $1 AND item_id = 'SSR Token'", str(ctx.author.id))
         if not token_row or token_row['quantity'] < 1:
-            return await ctx.reply(f"❌ You do not have an **SSR Token**! Buy one in the shop.")
+            return await ctx.reply(f"❌ You do not have an **SSR Token** {Emotes.SSRTOKEN}! Buy one in the shop.")
 
         # 2. Check if user owns the character and it is an SSR
         char_row = await pool.fetchrow("""
@@ -257,7 +257,7 @@ class Inventory(commands.Cog):
                 # Upgrade Unit
                 await conn.execute("UPDATE inventory SET dupe_level = dupe_level + 1 WHERE id = $1", char_id)
 
-        await ctx.reply(f"{Emotes.SSRTOKEN} **Success!** Used 1 SSR Token to upgrade **{char_row['name']}** to **Dupe Lv. {char_row['dupe_level'] + 1}**!")
+        await ctx.reply(f"**Success!** Used 1 {Emotes.SSRTOKEN} to upgrade **{char_row['name']}** to **Dupe Lv. {char_row['dupe_level'] + 1}**!")
 
 async def setup(bot):
     await bot.add_cog(Inventory(bot))

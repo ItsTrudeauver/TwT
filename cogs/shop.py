@@ -14,7 +14,7 @@ STANDARD_ITEMS = [
         "description": "Upgrades an SSR unit by +1 Dupe Level.",
         "price": 1000,
         "currency": "coins",  
-        "emoji": "💎"
+        "emoji": f"{Emotes.SSRTOKEN}"
     }
 ]
 
@@ -279,13 +279,13 @@ class Shop(commands.Cog):
     async def buy_ssr_token(self, ctx):
         """Quick command to buy an SSR Token."""
         token_data = next((i for i in STANDARD_ITEMS if i['id'] == 'SSR Token'), None)
-        if not token_data: return await ctx.reply("❌ SSR Token is currently not available.")
+        if not token_data: return await ctx.reply(f"❌ {Emotes.SSRTOKEN} SSR Token is currently not available.")
         
         price = token_data['price']
         pool = await get_db_pool()
         user = await pool.fetchrow("SELECT coins FROM users WHERE user_id = $1", str(ctx.author.id))
         if not user or user['coins'] < price:
-            return await ctx.reply(f"❌ You need **{price:,} {Emotes.COINS}** to buy an SSR Token.")
+            return await ctx.reply(f"❌ You need **{price:,} {Emotes.COINS}** to buy 1 {Emotes.SSRTOKEN}.")
 
         async with pool.acquire() as conn:
             async with conn.transaction():
@@ -297,7 +297,7 @@ class Shop(commands.Cog):
                     DO UPDATE SET quantity = user_items.quantity + 1
                 """, str(ctx.author.id))
                 
-        await ctx.reply(f"✅ Purchased **1 SSR Token** for {price:,} {Emotes.COINS}!")
+        await ctx.reply(f"✅ Purchased **1 {Emotes.SSRTOKEN}** for {price:,} {Emotes.COINS}!")
 
     @commands.command(name="spark", aliases=["pity_exchange"])
     async def spark_exchange(self, ctx):

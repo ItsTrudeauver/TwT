@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 from discord.ui import View, Select, Button
 from core.database import get_db_pool
+from core.emotes import Emotes
 
 class TeamBuilderView(View):
     def __init__(self, ctx, inventory_data):
@@ -28,9 +29,9 @@ class TeamBuilderView(View):
             placeholder="Filter by Rarity",
             options=[
                 discord.SelectOption(label="All Rarities", value="ALL", default=True),
-                discord.SelectOption(label="SSR Only", value="SSR"),
-                discord.SelectOption(label="SR Only", value="SR"),
-                discord.SelectOption(label="R Only", value="R")
+                discord.SelectOption(label=f"{Emotes.SSR} Only", value="SSR"),
+                discord.SelectOption(label=f"{Emotes.SR} Only", value="SR"),
+                discord.SelectOption(label=f"{Emotes.R} Only", value="R")
             ],
             row=0
         )
