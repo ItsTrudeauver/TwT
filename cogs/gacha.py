@@ -59,8 +59,9 @@ class Gacha(commands.Cog):
         async with pool.acquire() as conn:
             user = await conn.fetchrow("SELECT banner_points, last_banner_id FROM users WHERE user_id = $1", str(user_id))
             
-            current_points = user['banner_points'] if user else 0
-            last_id = user['last_banner_id'] if user else -1
+            # Fix: Handle None values safely for existing users
+            current_points = user['banner_points'] if user and user['banner_points'] is not None else 0
+            last_id = user['last_banner_id'] if user and user['last_banner_id'] is not None else -1
             
             if last_id != banner_id:
                 current_points = 0
@@ -252,11 +253,11 @@ class Gacha(commands.Cog):
             await batch_cache_characters(pulled_chars)
             scrapped_gems = await batch_add_to_inventory(ctx.author.id, pulled_chars)
             
-            # --- FOOTER TEXT GENERATION ---
-            footer_text = ""
+            # --- FOOTER TEXT GENERATION -> MOVED TO DESCRIPTION ---
+            spark_text = ""
             if banner:
                 spark_emote = getattr(Emotes, "SPARK", "✨") 
-                footer_text = f"{spark_emote} Spark Points: {spark_points_now}/200"
+                spark_text = f"{spark_emote} **Spark Points:** {spark_points_now}/200"
 
             # --- SINGLE PULL RESPONSE ---
             if amount == 1:
@@ -269,9 +270,12 @@ class Gacha(commands.Cog):
                 if scrapped_gems > 0:
                     desc += f"\n♻️ **Max Dupes!** Scrapped for **{scrapped_gems:,} {Emotes.GEMS}**"
                 
+                # Add Spark to description (since footer doesn't support emotes)
+                if spark_text:
+                    desc += f"\n\n{spark_text}"
+
                 embed = discord.Embed(title=f"✨ {c['name']}", description=desc, color=0xFFD700)
                 embed.set_image(url=c['image_url'])
-                if footer_text: embed.set_footer(text=footer_text)
                 
                 await loading.delete()
                 await ctx.reply(embed=embed)
@@ -281,15 +285,20 @@ class Gacha(commands.Cog):
                 img = await generate_10_pull_image(pulled_chars)
                 await loading.delete()
                 
-                # We always create an embed now to hold the image + footer
+                # We always create an embed now to hold the image + footer info
                 embed = discord.Embed(color=0x2ECC71)
                 embed.set_image(url="attachment://10pull.png")
                 
+                desc_parts = []
                 if scrapped_gems > 0:
-                    embed.description = f"♻️ **Auto-scrapped extras for {scrapped_gems:,} {Emotes.GEMS}!**"
+                    desc_parts.append(f"♻️ **Auto-scrapped extras for {scrapped_gems:,} {Emotes.GEMS}!**")
                 
-                if footer_text:
-                    embed.set_footer(text=footer_text)
+                # Add Spark to description
+                if spark_text:
+                    desc_parts.append(spark_text)
+                
+                if desc_parts:
+                    embed.description = "\n".join(desc_parts)
                 
                 # Send File + Embed together
                 file = discord.File(fp=img, filename="10pull.png")
