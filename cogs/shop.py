@@ -13,7 +13,7 @@ STANDARD_ITEMS = [
         "id": "SSR Token",
         "name": "SSR Token",
         "description": "Upgrades an SSR unit by +1 Dupe Level.",
-        "price": 1000,
+        "price": 2000,
         "currency": "coins",  # Use 'coins' or 'gems'
         "emoji": "<:SSRToken:1464467899346583849>"
     }
