@@ -195,7 +195,7 @@ class Bounty(commands.Cog):
         configs = [
             (1, "R", 30000, 35000),
             (2, "SR", 50000, 55000),
-            (3, "SSR", 70000, 75000)
+            (3, "SSR", 75000, 80000)
         ]
 
         async with pool.acquire() as conn:
@@ -396,34 +396,32 @@ class Bounty(commands.Cog):
                 ON CONFLICT (user_id, slot_id) DO UPDATE SET status = $3
             """, user_id, slot_id, final_status)
             
-            # 4. Rewards
+# 4. Rewards
             debug_log.append("STEP 4: Rewards")
             loot_text = "None"
             if outcome == "WIN":
                 tier = bounty_row['tier']
+                
                 if tier == "UR":
                     await pool.execute("UPDATE users SET coins = coins + 50, gacha_gems = gacha_gems + 5000 WHERE user_id = $1", user_id)
                     await pool.execute("INSERT INTO user_items (user_id, item_id, quantity) VALUES ($1, 'bond_ur', 1) ON CONFLICT (user_id, item_id) DO UPDATE SET quantity = user_items.quantity + 1", user_id)
-                    loot_text = f"**UR Bond** {Emotes.UR_BOND}, 50 Coins, 5000 Gems"
+                    # Updated to use "Essence of Devotion"
+                    loot_text = f"**Essence of Devotion** {Emotes.UR_BOND}, 50 Coins, 5000 Gems"
                 else:
                     item_map = {1: "bond_small", 2: "bond_med", 3: "bond_large"}
                     item_id = item_map.get(slot_id, "bond_small")
-                    name_map = {
-                        "bond_small": "Faint Tincture",
-                        "bond_med": "Vital Draught",
-                        "bond_large": "Heart Elixirs"
+                    
+                    # Mapping for Name + Emote
+                    rewards_info = {
+                        "bond_small": ("Faint Tincture", Emotes.R_BOND),
+                        "bond_med":   ("Vital Draught",  Emotes.SR_BOND),
+                        "bond_large": ("Heart Elixirs",  Emotes.SSR_BOND)
                     }
-                    emote_map ={
-                        "bond_small": Emotes.R_BOND,
-                        "bond_med": Emotes.SR_BOND,
-                        "bond_large": Emotes.SSR_BOND
-                    }
-                    display_name = name_map.get(item_id, item_id.replace('_', ' ').title())
-                    display_emote = emote_map.get(item_id, "")
-                    loot_text = f"1x {display_name} {display_emote}"
+
+                    display_name, emote = rewards_info.get(item_id, (item_id.replace('_', ' ').title(), ""))
+                    loot_text = f"1x **{display_name}** {emote}"
                     
                     await pool.execute(f"INSERT INTO user_items (user_id, item_id, quantity) VALUES ($1, $2, 1) ON CONFLICT (user_id, item_id) DO UPDATE SET quantity = user_items.quantity + 1", user_id, item_id)
-
             # 5. Collect Logs
             debug_log.append("STEP 5: Processing Logs")
             combined_logs = []
