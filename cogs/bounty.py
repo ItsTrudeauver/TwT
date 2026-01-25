@@ -186,25 +186,32 @@ class Bounty(commands.Cog):
 
     # --- TASKS ---
 
-    @tasks.loop(hours=3)
+    @tasks.loop(hours=1)
     async def bounty_refresh_loop(self):
         pool = await get_db_pool()
-        expires_at = datetime.datetime.now() + datetime.timedelta(hours=3)
+        # Reset every 1 hour
+        expires_at = datetime.datetime.now() + datetime.timedelta(hours=1)
         
-        # Configuration: (Slot, Tier, MinPower, MaxPower)
-        configs = [
-            (1, "R", 30000, 35000),
-            (2, "SR", 50000, 55000),
-            (3, "SSR", 75000, 80000)
-        ]
+        # Configuration: Base Tiers and their power ranges
+        tier_config = {
+            "R": (30000, 35000),
+            "SR": (50000, 55000),
+            "SSR": (75000, 80000)
+        }
 
         async with pool.acquire() as conn:
             await conn.execute("DELETE FROM bounty_board")
             await conn.execute("DELETE FROM user_bounty_status")
             
-            for slot, tier, min_p, max_p in configs:
+            # Generate 3 slots
+            for slot in range(1, 4):
+                # Truly random rarity selection for each slot
+                base_tier = random.choice(list(tier_config.keys()))
+                min_p, max_p = tier_config[base_tier]
+
+                # UR Chance check (1%)
                 is_ur = random.random() < 0.01
-                final_tier = "UR" if is_ur else tier
+                final_tier = "UR" if is_ur else base_tier
                 total_power = 90000 if is_ur else random.randint(min_p, max_p)
                 
                 # Mock Team Generation
@@ -255,8 +262,12 @@ class Bounty(commands.Cog):
             elif status == "FAILED": icon = "❌ Failed"
             else: icon = "⚔️ Available"
             
-            if tier == "UR": rewards = "**UR Bond**, 50 Coins, 5k Gems"
-            else: rewards = {1: "Small Bond", 2: "Med Bond", 3: "Large Bond"}.get(slot, "Gift")
+            if tier == "UR": 
+                rewards = "**UR Bond**, 50 Coins, 5k Gems"
+            else:
+                # Reward now maps based on Tier, not Slot ID
+                reward_map = {"R": "Small Bond", "SR": "Med Bond", "SSR": "Large Bond"}
+                rewards = reward_map.get(tier, "Unknown Gift")
             
             enemy_team = json.loads(row['enemy_data'])
             power = sum(u['true_power'] for u in enemy_team)
@@ -408,8 +419,9 @@ class Bounty(commands.Cog):
                     # Updated to use "Essence of Devotion"
                     loot_text = f"**Essence of Devotion** {Emotes.UR_BOND}, 50 Coins, 5000 Gems"
                 else:
-                    item_map = {1: "bond_small", 2: "bond_med", 3: "bond_large"}
-                    item_id = item_map.get(slot_id, "bond_small")
+                    # Tier-based rewards instead of Slot-based
+                    tier_item_map = {"R": "bond_small", "SR": "bond_med", "SSR": "bond_large"}
+                    item_id = tier_item_map.get(tier, "bond_small")
                     
                     # Mapping for Name + Emote
                     rewards_info = {
