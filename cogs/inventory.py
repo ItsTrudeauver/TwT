@@ -5,7 +5,7 @@ from discord.ui import View, Button
 import math
 import json
 from core.database import get_db_pool, get_user, mass_scrap_r_rarity, mass_scrap_sr_rarity
-from core.emotes import Emotes  # Import Emotes
+from core.emotes import Emotes
 
 class ConfirmSRScrap(View):
     def __init__(self, author):
@@ -26,7 +26,6 @@ class ConfirmSRScrap(View):
 
 class InventoryView(discord.ui.View):
     def __init__(self, bot, user, pool, per_page=10):
-        # Setting timeout to None so buttons don't die
         super().__init__(timeout=None)
         self.bot = bot
         self.user = user
@@ -37,7 +36,6 @@ class InventoryView(discord.ui.View):
 
     async def get_page_content(self):
         user_id_str = str(self.user.id)
-        # 1. Force recalculate max pages
         count_val = await self.pool.fetchval("SELECT COUNT(*) FROM inventory WHERE user_id = $1", user_id_str)
         count_val = count_val or 0
         self.max_pages = math.ceil(count_val / self.per_page)
@@ -46,7 +44,8 @@ class InventoryView(discord.ui.View):
         user_data = await get_user(self.user.id)
         
         offset = (self.page - 1) * self.per_page
-        # UPDATED SQL: Includes dupe_level and calculates boosted power for sorting/display
+        
+        # Includes Bond Level and Dupe Level in power calc
         rows = await self.pool.fetch("""
             SELECT 
                 i.id, 
@@ -77,20 +76,20 @@ class InventoryView(discord.ui.View):
         else:
             for row in rows:
                 lock = "🔒" if row['is_locked'] else ""
-                rarity = f"{Emotes.SSR}" if row['rarity'] == "SSR" else f"{Emotes.SR}" if row['rarity'] == "SR" else f"{Emotes.R}"
+                rarity_emote = getattr(Emotes, row['rarity'], "")
                 
-                # UPDATED: Add dupe count display next to the name
-                dupe_text = f" (+{row['dupe_level']})" if row['dupe_level'] > 0 else ""
+                # Dupe & Bond indicators
+                meta_text = ""
+                if row['dupe_level'] > 0: meta_text += f" (+{row['dupe_level']})"
+                if row['bond_level'] > 0: meta_text += f" ♥{row['bond_level']}"
                 
-                embed.description += f"`#{row['id']}` {lock} **{row['name']}**{dupe_text} {rarity} — ⚔️ `{row['true_power']:,}`\n"
+                embed.description += f"`#{row['id']}` {lock} **{row['name']}**{meta_text} {rarity_emote} — ⚔️ `{row['true_power']:,}`\n"
 
         embed.set_footer(text=f"Page {self.page} of {self.max_pages} | Use !view [ID]")
         return embed
 
     def update_buttons(self):
-        # Disable "Previous" if on page 1
         self.prev_button.disabled = (self.page <= 1)
-        # Disable "Next" if on the last page or if there's only 1 page
         self.next_button.disabled = (self.page >= self.max_pages)
 
     @discord.ui.button(label="⬅️ Previous", style=discord.ButtonStyle.primary)
@@ -120,17 +119,13 @@ class Inventory(commands.Cog):
     async def show_inventory(self, ctx):
         pool = await get_db_pool()
         view = InventoryView(self.bot, ctx.author, pool)
-        
-        # We MUST fetch content first so max_pages is calculated BEFORE update_buttons
         embed = await view.get_page_content()
         view.update_buttons()
-        
         await ctx.reply(embed=embed, view=view)
 
     @commands.command(name="view")
     async def view_character(self, ctx, inventory_id: int):
         pool = await get_db_pool()
-        # UPDATED SQL: Pulls dupe_level and calculates boosted power
         row = await pool.fetchrow("""
             SELECT 
                 i.id, 
@@ -141,7 +136,9 @@ class Inventory(commands.Cog):
                 i.is_locked, 
                 c.anilist_id, 
                 i.dupe_level,
-                FLOOR(c.true_power * (1 + (i.dupe_level * 0.05))) as true_power
+                i.bond_level,
+                i.bond_exp,
+                FLOOR(c.true_power * (1 + (i.dupe_level * 0.05)) * (1 + (i.bond_level * 0.005))) as true_power
             FROM inventory i
             JOIN characters_cache c ON i.anilist_id = c.anilist_id
             WHERE i.id = $1 AND i.user_id = $2
@@ -155,11 +152,11 @@ class Inventory(commands.Cog):
         
         status = "🔒 Locked" if row['is_locked'] else "🔓 Unlocked"
         
-        # UPDATED: Added Dupes count to the field list and corrected power display
         details = (
             f"**Rarity:** {row['rarity']}\n"
             f"**Power:** {row['true_power']:,}\n"
             f"**Dupes:** {row['dupe_level']}\n"
+            f"**Bond:** Lv. {row['bond_level']} (EXP: {row['bond_exp']})\n"
             f"**Status:** {status}"
         )
         embed.add_field(name="DETAILS", value=details, inline=True)
@@ -190,7 +187,6 @@ class Inventory(commands.Cog):
 
     @commands.command(name="scrap_sr")
     async def scrap_sr_cmd(self, ctx):
-        """Mass scraps unlocked SRs with confirmation."""
         view = ConfirmSRScrap(ctx.author)
         msg = await ctx.reply(
             "⚠️ **WARNING:** This will scrap ALL **unlocked** SR units for 500 Gems + 25 Coins each.\n**Please check if you locked the ones you want to keep!**", 
@@ -209,18 +205,32 @@ class Inventory(commands.Cog):
 
     @commands.command(name="items", aliases=["bag"])
     async def show_items(self, ctx):
-        """Displays your Coins and Special Items."""
+        """Displays your Coins and Special Items with correct visual icons."""
         pool = await get_db_pool()
         user_data = await pool.fetchrow("SELECT coins FROM users WHERE user_id = $1", str(ctx.author.id))
         items = await pool.fetch("SELECT item_id, quantity FROM user_items WHERE user_id = $1 AND quantity > 0", str(ctx.author.id))
         
         coins = user_data['coins'] if user_data else 0
         
+        # Mapping DB item_id to Emotes
+        item_map = {
+            "bond_small": f"{Emotes.R_BOND} Small Bond",
+            "bond_med": f"{Emotes.SR_BOND} Medium Bond",
+            "bond_large": f"{Emotes.SSR_BOND} Large Bond",
+            "bond_ur": f"{Emotes.UR_BOND} UR Bond",
+            "SSR Token": f"{Emotes.SSRTOKEN} SSR Token",
+        }
+
         embed = discord.Embed(title=f"🎒 {ctx.author.display_name}'s Items", color=0x9B59B6)
         embed.add_field(name="Currency", value=f"{Emotes.COINS} **Coins:** `{coins:,}`", inline=False)
         
         if items:
-            item_list = "\n".join([f"• **{r['item_id']}**: `{r['quantity']}`" for r in items])
+            lines = []
+            for r in items:
+                # Use mapped name/emoji if exists, else format the raw ID
+                display = item_map.get(r['item_id'], f"📦 {r['item_id'].replace('_', ' ').title()}")
+                lines.append(f"• {display}: `{r['quantity']}`")
+            item_list = "\n".join(lines)
         else:
             item_list = "*No special items owned.*"
             
@@ -229,15 +239,11 @@ class Inventory(commands.Cog):
 
     @commands.command(name="use_token")
     async def use_ssr_token(self, ctx, char_id: int):
-        """Uses an SSR Token to upgrade a specific character."""
         pool = await get_db_pool()
-        
-        # 1. Check if user has a token
         token_row = await pool.fetchrow("SELECT quantity FROM user_items WHERE user_id = $1 AND item_id = 'SSR Token'", str(ctx.author.id))
         if not token_row or token_row['quantity'] < 1:
-            return await ctx.reply(f"❌ You do not have an **SSR Token** {Emotes.SSRTOKEN}! Buy one in the shop.")
+            return await ctx.reply(f"❌ You do not have an **SSR Token** {Emotes.SSRTOKEN}!")
 
-        # 2. Check if user owns the character and it is an SSR
         char_row = await pool.fetchrow("""
             SELECT i.dupe_level, c.rarity, c.name 
             FROM inventory i 
@@ -245,24 +251,16 @@ class Inventory(commands.Cog):
             WHERE i.user_id = $1 AND i.id = $2
         """, str(ctx.author.id), char_id)
 
-        if not char_row:
-            return await ctx.reply("❌ Character not found in your inventory.")
-        
-        if char_row['rarity'] != 'SSR':
-            return await ctx.reply("❌ You can only use this token on **SSR** characters.")
-            
-        if char_row['dupe_level'] >= 10:
-            return await ctx.reply("❌ This character is already at Max Dupes (Lv. 10)!")
+        if not char_row: return await ctx.reply("❌ Character not found.")
+        if char_row['rarity'] != 'SSR': return await ctx.reply("❌ Only for **SSR** characters.")
+        if char_row['dupe_level'] >= 10: return await ctx.reply("❌ Already at Max Dupes!")
 
-        # 3. Apply Upgrade
         async with pool.acquire() as conn:
             async with conn.transaction():
-                # Consume Token
                 await conn.execute("UPDATE user_items SET quantity = quantity - 1 WHERE user_id = $1 AND item_id = 'SSR Token'", str(ctx.author.id))
-                # Upgrade Unit
                 await conn.execute("UPDATE inventory SET dupe_level = dupe_level + 1 WHERE id = $1", char_id)
 
-        await ctx.reply(f"**Success!** Used 1 {Emotes.SSRTOKEN} to upgrade **{char_row['name']}** to **Dupe Lv. {char_row['dupe_level'] + 1}**!")
+        await ctx.reply(f"**Success!** Upgraded **{char_row['name']}** to **Dupe Lv. {char_row['dupe_level'] + 1}**!")
 
 async def setup(bot):
     await bot.add_cog(Inventory(bot))
