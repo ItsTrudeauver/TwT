@@ -38,7 +38,7 @@ class HuntView(View):
                 desc = "Already attempted"
                 emoji = "✅" if status == "COMPLETED" else "❌"
 
-            # Only allow selecting Available ones
+            # Only allow selecting Available ones for the hunt interaction
             if status == "AVAILABLE":
                 options.append(discord.SelectOption(
                     label=label,
@@ -107,7 +107,7 @@ class HuntView(View):
     async def fight_callback(self, interaction: discord.Interaction):
         if not self.selected_slot: return
 
-        # Lock UI immediately to prevent double clicks
+        # Lock UI immediately
         self.select.disabled = True
         self.fight_btn.disabled = True
         self.fight_btn.label = "⏳ BATTLE IN PROGRESS..."
@@ -155,6 +155,7 @@ class Bounty(commands.Cog):
             
             if hours_passed > 0:
                 new_keys = min(3, current_keys + hours_passed)
+                # Keep minute offset
                 new_last_regen = last_regen + datetime.timedelta(hours=hours_passed)
                 await conn.execute("UPDATE users SET bounty_keys = $1, last_key_regen = $2 WHERE user_id = $3", 
                                    new_keys, new_last_regen, str(user_id))
@@ -211,6 +212,7 @@ class Bounty(commands.Cog):
                         'true_power': member_power,
                         'rarity': final_tier,
                         'ability_tags': [], 
+                        'anilist_id': 0, # Placeholder for safety
                         'image_url': None
                     })
                 
@@ -305,7 +307,6 @@ class Bounty(commands.Cog):
             
             # 3. Run Battle
             ctx = BattleContext(attacker_team, defender_team)
-            skill_logs = []
 
             # -- Initialize Skills --
             all_skills = []
@@ -336,30 +337,57 @@ class Bounty(commands.Cog):
                         if s.side == side and s.idx == i:
                             mod = await s.get_power_modifier(ctx, power)
                             power *= mod
-                            
-                    variance = random.uniform(0.9, 1.1)
-                    final_powers[side].append(int(power * variance))
+                    
+                    # Apply Multipliers (Context)
+                    power *= ctx.multipliers[side][i]
+                    power += ctx.flat_bonuses[side][i]
+                    
+                    # Apply Variance
+                    # Check for override (Dragon Zodiac)
+                    variance_val = ctx.flags.get("variance_override", {}).get(f"{side}_{i}", None)
+                    if variance_val is None:
+                        variance_val = random.uniform(0.9, 1.1)
+                    
+                    final_powers[side].append(max(0, int(power * variance_val)))
             
-            # -- Post Calc / Log Simulation --
+            # -- Post Calc (Zodiac swaps/copies) --
             for s in all_skills:
-                if s.side == "attacker":
-                    skill_logs.append(f"✨ {s.char['name']} used **{s.tag}**")
+                await s.on_post_power_calculation(ctx, final_powers)
 
+            # -- Outcome --
             total_att = sum(final_powers["attacker"])
             total_def = sum(final_powers["defender"])
             
-            win = total_att > total_def
-            outcome = "COMPLETED" if win else "FAILED"
+            initial_win = total_att > total_def
+            outcome = "WIN" if initial_win else "LOSS"
             
-            # 4. Save Status
+            # Special Check (Snake Zodiac / Revive)
+            if not initial_win and ctx.flags.get("snake_trap"):
+                outcome = "DRAW"
+                ctx.misc_logs["defender"].append("🐍 **Snake Zodiac** forced a DRAW!")
+
+            if outcome == "LOSS":
+                 for s in all_skills:
+                     if s.side == "attacker":
+                         # Check on_battle_end modifiers (Revive)
+                         new_res = await s.on_battle_end(ctx, outcome)
+                         if new_res: 
+                             outcome = new_res
+                             break
+
+            # -- Status Update --
+            final_status = "COMPLETED" if outcome == "WIN" else "FAILED"
+            if outcome == "DRAW": final_status = "FAILED" # Treat draw as fail for bounty purposes? Or allow retry? 
+            # Usually Bounties require a WIN.
+            
             await pool.execute("""
                 INSERT INTO user_bounty_status (user_id, slot_id, status) VALUES ($1, $2, $3)
                 ON CONFLICT (user_id, slot_id) DO UPDATE SET status = $3
-            """, user_id, slot_id, outcome)
+            """, user_id, slot_id, final_status)
             
-            # 5. Distribute Rewards
+            # 4. Rewards
             loot_text = "None"
-            if win:
+            if outcome == "WIN":
                 tier = bounty_row['tier']
                 if tier == "UR":
                     await pool.execute("UPDATE users SET coins = coins + 50, gacha_gems = gacha_gems + 5000 WHERE user_id = $1", user_id)
@@ -373,20 +401,43 @@ class Bounty(commands.Cog):
                     
                     await pool.execute(f"INSERT INTO user_items (user_id, item_id, quantity) VALUES ($1, $2, 1) ON CONFLICT (user_id, item_id) DO UPDATE SET quantity = user_items.quantity + 1", user_id, item_id)
 
+            # 5. Collect Logs (THE FIX)
+            # We aggregate logs from the Context, avoiding manual object access
+            combined_logs = []
+            
+            # Add Global/Misc Logs first
+            if ctx.misc_logs['attacker']: combined_logs.extend(ctx.misc_logs['attacker'])
+            if ctx.misc_logs['defender']: combined_logs.extend(ctx.misc_logs['defender'])
+            
+            # Add Slot-specific logs
+            for side in ['attacker', 'defender']:
+                for slot_idx in sorted(ctx.logs[side].keys()):
+                    for msg in ctx.logs[side][slot_idx]:
+                        combined_logs.append(msg)
+
             # 6. Generate Result UI
+            color = 0x2ECC71 if outcome == "WIN" else 0xE74C3C
+            if outcome == "DRAW": color = 0xF1C40F
+
             result_embed = discord.Embed(
-                title="🏆 VICTORY" if win else "💀 DEFEAT",
-                color=0x2ECC71 if win else 0xE74C3C
+                title=f"BATTLE RESULT: {outcome}",
+                color=color
             )
             result_embed.add_field(name="Your Power", value=f"{total_att:,}", inline=True)
             result_embed.add_field(name="Enemy Power", value=f"{total_def:,}", inline=True)
             result_embed.add_field(name="Loot", value=loot_text, inline=False)
             
-            if skill_logs and win:
-                result_embed.add_field(name="Battle Log", value="\n".join(set(skill_logs))[:1000], inline=False)
+            if combined_logs:
+                # Deduplicate and limit length
+                unique_logs = list(dict.fromkeys(combined_logs))
+                log_str = "\n".join(unique_logs)
+                if len(log_str) > 1000: log_str = log_str[:995] + "..."
+                result_embed.add_field(name="Battle Log", value=log_str, inline=False)
+            else:
+                 result_embed.add_field(name="Battle Log", value="*No significant events.*", inline=False)
 
             file = None
-            if win:
+            if outcome == "WIN":
                 # Attempt Image Generation
                 try:
                     img_bytes = await generate_team_image(attacker_team)
@@ -394,13 +445,11 @@ class Bounty(commands.Cog):
                     result_embed.set_image(url="attachment://victory.png")
                 except Exception as img_err:
                     print(f"Image Gen Error: {img_err}")
-                    result_embed.set_footer(text="Victory image generation failed.")
 
             # Send the Result (New Message)
             await interaction.followup.send(embed=result_embed, file=file)
 
             # 7. Update Original Dashboard (Lock the Slot)
-            # Fetch fresh state
             new_embed, new_view = await self.get_dashboard_embed_and_view(user_id)
             if new_embed:
                 await interaction.edit_original_response(embed=new_embed, view=new_view)
