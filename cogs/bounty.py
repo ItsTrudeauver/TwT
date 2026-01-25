@@ -199,15 +199,8 @@ class Bounty(commands.Cog):
         embed = discord.Embed(title="⚔️ Bounty Hunt Dashboard", description=f"**Keys Available:** {keys}/3 {Emotes.KEYS}", color=0x3498db)
         embed.set_footer(text="Select a target from the dropdown to begin.")
         
-        # SMART IMAGE LOGIC
-        banner_file = self.get_banner_file()
-        if banner_file:
-            embed.set_image(url=f"attachment://{BANNER_FILENAME}")
-        else:
-            embed.set_image(url=BANNER_URL)
-        
         view = HuntView(self.bot, user_id, bounty_data, status_map)
-        return embed, view, banner_file
+        return embed, view
 
     # --- TASKS ---
 
