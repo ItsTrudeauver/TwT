@@ -78,5 +78,57 @@ class Daily(commands.Cog):
             await conn.execute("UPDATE daily_tasks SET is_claimed = TRUE WHERE user_id = $1 AND task_key = $2", user_id, task)
             await ctx.reply(f"🎉 **Claimed {reward:,} {Emotes.GEMS}** for {task} task!")
 
+    @commands.command(name="claimall")
+    async def claim_all(self, ctx):
+        """Claim all completed daily task rewards at once"""
+        user_id = str(ctx.author.id)
+        pool = await get_db_pool()
+
+        # Clean up old tasks to prevent claiming expired rewards
+        await pool.execute("DELETE FROM daily_tasks WHERE user_id = $1 AND last_updated < CURRENT_DATE", user_id)
+
+        async with pool.acquire() as conn:
+            # Select all tasks that are completed (progress > 0) and not yet claimed
+            rows = await conn.fetch("""
+                SELECT task_key 
+                FROM daily_tasks 
+                WHERE user_id = $1 AND is_claimed = FALSE AND progress > 0
+            """, user_id)
+
+            if not rows:
+                return await ctx.reply("❌ No completed rewards to claim.")
+
+            total_reward = 0
+            claimed_keys = []
+
+            for row in rows:
+                task = row['task_key']
+                reward = 0
+                
+                # Calculate reward based on task type
+                if task == "pvp":
+                    reward = 500
+                elif task in NPC_DATA:
+                    reward = NPC_DATA[task]["reward"]
+                
+                if reward > 0:
+                    total_reward += reward
+                    claimed_keys.append(task)
+
+            if not claimed_keys:
+                return await ctx.reply("❌ No valid rewards found.")
+
+            # Batch update all claimed tasks to TRUE
+            await conn.execute("""
+                UPDATE daily_tasks 
+                SET is_claimed = TRUE 
+                WHERE user_id = $1 AND task_key = ANY($2::text[])
+            """, user_id, claimed_keys)
+
+            await add_currency(user_id, total_reward)
+            
+            task_list = ", ".join([k.capitalize() for k in claimed_keys])
+            await ctx.reply(f"🎉 **Bulk Claimed {total_reward:,} {Emotes.GEMS}**!\n**Tasks:** {task_list}")
+
 async def setup(bot):
     await bot.add_cog(Daily(bot))
