@@ -159,8 +159,13 @@ class Bounty(commands.Cog):
             
             if hours_passed > 0:
                 new_keys = min(3, current_keys + hours_passed)
-                # Keep minute offset
-                new_last_regen = last_regen + datetime.timedelta(hours=hours_passed)
+                
+                # --- SYNC LOGIC: Snap the timer to the Top of the Hour ---
+                # Calculate the exact hour where regeneration happened
+                regen_point = last_regen + datetime.timedelta(hours=hours_passed)
+                # Snap to Minute 0, Second 0
+                new_last_regen = regen_point.replace(minute=0, second=0, microsecond=0)
+                
                 await conn.execute("UPDATE users SET bounty_keys = $1, last_key_regen = $2 WHERE user_id = $3", 
                                    new_keys, new_last_regen, str(user_id))
                 return new_keys
@@ -188,10 +193,12 @@ class Bounty(commands.Cog):
 
     @tasks.loop(hours=1)
     async def bounty_refresh_loop(self):
+        """Generates new bounties every hour."""
         pool = await get_db_pool()
-        # Reset every 1 hour
+        # Expires exactly 1 hour from now (which will be the next top of the hour)
         expires_at = datetime.datetime.now() + datetime.timedelta(hours=1)
-        
+        expires_at = expires_at.replace(minute=0, second=0, microsecond=0)
+
         # Configuration: Base Tiers and their power ranges
         tier_config = {
             "R": (30000, 35000),
@@ -205,16 +212,13 @@ class Bounty(commands.Cog):
             
             # Generate 3 slots
             for slot in range(1, 4):
-                # Truly random rarity selection for each slot
                 base_tier = random.choice(list(tier_config.keys()))
                 min_p, max_p = tier_config[base_tier]
 
-                # UR Chance check (1%)
                 is_ur = random.random() < 0.01
                 final_tier = "UR" if is_ur else base_tier
                 total_power = 90000 if is_ur else random.randint(min_p, max_p)
                 
-                # Mock Team Generation
                 member_power = total_power // 5
                 team_data = []
                 for i in range(5):
@@ -223,7 +227,7 @@ class Bounty(commands.Cog):
                         'true_power': member_power,
                         'rarity': final_tier,
                         'ability_tags': [], 
-                        'anilist_id': 0, # Placeholder for safety
+                        'anilist_id': 0, 
                         'image_url': None
                     })
                 
@@ -231,6 +235,29 @@ class Bounty(commands.Cog):
                     INSERT INTO bounty_board (slot_id, enemy_data, tier, expires_at)
                     VALUES ($1, $2, $3, $4)
                 """, slot, json.dumps(team_data), final_tier, expires_at)
+        
+        print(f"[Bounty] Board refreshed at {datetime.datetime.now()}")
+
+    @bounty_refresh_loop.before_loop
+    async def before_bounty_refresh(self):
+        """Aligns the loop to the top of the hour (Minute 0)."""
+        await self.bot.wait_until_ready()
+        
+        # 1. Initial Check: If board is empty (bot restart), fill it immediately.
+        # We don't want to wait 45 mins with an empty board just to sync.
+        pool = await get_db_pool()
+        rows = await pool.fetch("SELECT slot_id FROM bounty_board")
+        if not rows:
+            print("[Bounty] Board empty on startup, triggering immediate refresh...")
+            await self.bounty_refresh_loop.coro(self) # Manually call the routine once
+
+        # 2. Calculate sleep time until next XX:00:00
+        now = datetime.datetime.now()
+        next_hour = (now + datetime.timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
+        
+        delay = (next_hour - now).total_seconds()
+        print(f"[Bounty] Syncing refresh loop... Sleeping for {int(delay)} seconds.")
+        await asyncio.sleep(delay)
 
     # --- COMMANDS ---
 
@@ -265,7 +292,6 @@ class Bounty(commands.Cog):
             if tier == "UR": 
                 rewards = "**UR Bond**, 50 Coins, 5k Gems"
             else:
-                # Reward now maps based on Tier, not Slot ID
                 reward_map = {"R": "Small Bond", "SR": "Med Bond", "SSR": "Large Bond"}
                 rewards = reward_map.get(tier, "Unknown Gift")
             
@@ -407,7 +433,7 @@ class Bounty(commands.Cog):
                 ON CONFLICT (user_id, slot_id) DO UPDATE SET status = $3
             """, user_id, slot_id, final_status)
             
-# 4. Rewards
+            # 4. Rewards
             debug_log.append("STEP 4: Rewards")
             loot_text = "None"
             if outcome == "WIN":
@@ -416,14 +442,11 @@ class Bounty(commands.Cog):
                 if tier == "UR":
                     await pool.execute("UPDATE users SET coins = coins + 50, gacha_gems = gacha_gems + 5000 WHERE user_id = $1", user_id)
                     await pool.execute("INSERT INTO user_items (user_id, item_id, quantity) VALUES ($1, 'bond_ur', 1) ON CONFLICT (user_id, item_id) DO UPDATE SET quantity = user_items.quantity + 1", user_id)
-                    # Updated to use "Essence of Devotion"
                     loot_text = f"**Essence of Devotion** {Emotes.UR_BOND}, 50 Coins, 5000 Gems"
                 else:
-                    # Tier-based rewards instead of Slot-based
                     tier_item_map = {"R": "bond_small", "SR": "bond_med", "SSR": "bond_large"}
                     item_id = tier_item_map.get(tier, "bond_small")
                     
-                    # Mapping for Name + Emote
                     rewards_info = {
                         "bond_small": ("Faint Tincture", Emotes.R_BOND),
                         "bond_med":   ("Vital Draught",  Emotes.SR_BOND),
@@ -434,6 +457,7 @@ class Bounty(commands.Cog):
                     loot_text = f"1x **{display_name}** {emote}"
                     
                     await pool.execute(f"INSERT INTO user_items (user_id, item_id, quantity) VALUES ($1, $2, 1) ON CONFLICT (user_id, item_id) DO UPDATE SET quantity = user_items.quantity + 1", user_id, item_id)
+            
             # 5. Collect Logs
             debug_log.append("STEP 5: Processing Logs")
             combined_logs = []
@@ -455,7 +479,7 @@ class Bounty(commands.Cog):
             )
             result_embed.add_field(name="Your Power", value=f"{total_att:,}", inline=True)
             result_embed.add_field(name="Enemy Power", value=f"{total_def:,}", inline=True)
-            result_embed.add_field(name="Loot", value=str(loot_text), inline=False) # Ensure string
+            result_embed.add_field(name="Loot", value=str(loot_text), inline=False)
             
             if combined_logs:
                 unique_logs = list(dict.fromkeys(combined_logs))
@@ -470,7 +494,6 @@ class Bounty(commands.Cog):
             if outcome == "WIN":
                 debug_log.append("STEP 6a: Generating Image")
                 try:
-                    # FIX: Map 'true_power' to 'power' for image generator
                     img_team_data = []
                     for m in attacker_team:
                         d = m.copy()
@@ -486,26 +509,21 @@ class Bounty(commands.Cog):
                     print(f"Image Gen Error: {img_err}")
                     debug_log.append(f"Image Gen Warning: {img_err}")
 
-            # Send the Result (New Message)
+            # Send Result
             debug_log.append("STEP 7: Sending Result")
-            
-            # FIX: Construct args to avoid passing file=None which triggers NoneType error in some d.py versions
             send_kwargs = {"embed": result_embed}
-            if file:
-                send_kwargs["file"] = file
+            if file: send_kwargs["file"] = file
             
             if result_embed:
                 await interaction.followup.send(**send_kwargs)
             else:
                 debug_log.append("CRITICAL: Embed was None")
 
-            # 7. Update Original Dashboard (Lock the Slot)
+            # 7. Update Original Dashboard
             debug_log.append("STEP 8: Updating Dashboard")
             new_embed, new_view = await self.get_dashboard_embed_and_view(user_id)
             if new_embed and new_view:
                 await interaction.edit_original_response(embed=new_embed, view=new_view)
-            else:
-                debug_log.append("Warning: Could not refresh dashboard (embed/view is None)")
         
         except Exception as e:
             traceback.print_exc()
@@ -514,7 +532,7 @@ class Bounty(commands.Cog):
             try:
                 await interaction.followup.send(error_report, ephemeral=True)
             except:
-                print(error_report) # Fallback to console
+                print(error_report)
 
     @commands.command(name="gift")
     async def gift_bond(self, ctx, char_id: int, item_alias: str):
@@ -526,7 +544,6 @@ class Bounty(commands.Cog):
             "ur": ("bond_ur", 2500)
         }
 
-        # --- UPDATED MAPPING (Name + Emote) ---
         item_details = {
             "bond_small": ("Faint Tincture", Emotes.R_BOND),
             "bond_med":   ("Vital Draught", Emotes.SR_BOND),
@@ -539,24 +556,18 @@ class Bounty(commands.Cog):
             return await ctx.reply("❌ Invalid item. Options: small, med, large, ur.")
             
         item_id, exp_gain = selection
-        
-        # Retrieve Name and Emote (default to empty string if not found)
         display_name, emote = item_details.get(item_id, (item_id, ""))
 
         pool = await get_db_pool()
         
-        # Check Item
         inv_item = await pool.fetchrow("SELECT quantity FROM user_items WHERE user_id=$1 AND item_id=$2", str(ctx.author.id), item_id)
         if not inv_item or inv_item['quantity'] < 1:
-            # Now includes the emote in the error message
             return await ctx.reply(f"❌ You do not own any **{display_name}** {emote}.")
             
-        # Check Character
         char = await pool.fetchrow("SELECT bond_level, bond_exp FROM inventory WHERE id=$1 AND user_id=$2", char_id, str(ctx.author.id))
         if not char: return await ctx.reply("❌ Character not found.")
         if char['bond_level'] >= 50: return await ctx.reply("❌ Character is already at Max Bond (Lv. 50)!")
         
-        # Apply EXP
         cur_lvl, cur_exp = char['bond_level'], char['bond_exp']
         cur_exp += exp_gain
         leveled = False
@@ -574,7 +585,6 @@ class Bounty(commands.Cog):
             await conn.execute("UPDATE user_items SET quantity = quantity - 1 WHERE user_id=$1 AND item_id=$2", str(ctx.author.id), item_id)
             await conn.execute("UPDATE inventory SET bond_level=$1, bond_exp=$2 WHERE id=$3", cur_lvl, cur_exp, char_id)
             
-        # Success message with Name + Emote
         msg = f"🎁 Used **{display_name}** {emote}! (+{exp_gain} Bond EXP)"
         if leveled:
             mult = 1 + (cur_lvl * 0.005)
