@@ -579,7 +579,7 @@ class Bounty(commands.Cog):
         
         selection = aliases.get(item_alias.lower())
         if not selection:
-            return await ctx.reply("❌ Invalid item. Options: small, med, large, ur.")
+            return await ctx.reply("❌ Invalid item. Options: small (Faint Tincture), med (Vital Draught), large (Heart Elixirs), ur (Essence of Devotion).")
             
         item_id, exp_gain = selection
         display_name, emote = item_details.get(item_id, (item_id, ""))
