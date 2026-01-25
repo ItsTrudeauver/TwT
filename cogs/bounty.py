@@ -42,7 +42,7 @@ class HuntView(View):
                 if status == "AVAILABLE":
                     label = f"Slot {slot}: {data['tier']} Tier"
                     desc = "Select to lock target"
-                    emoji = "🟥" 
+                    emoji = "🆚" 
                 else:
                     label = f"Slot {slot}: {data['tier']} ({status})"
                     desc = "Already attempted"
