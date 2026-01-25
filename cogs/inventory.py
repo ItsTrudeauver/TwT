@@ -214,10 +214,10 @@ class Inventory(commands.Cog):
         
         # Mapping DB item_id to Emotes
         item_map = {
-            "bond_small": f"{Emotes.R_BOND} Small Bond",
-            "bond_med": f"{Emotes.SR_BOND} Medium Bond",
-            "bond_large": f"{Emotes.SSR_BOND} Large Bond",
-            "bond_ur": f"{Emotes.UR_BOND} UR Bond",
+            "bond_small": f"{Emotes.R_BOND} Faint Tincture",
+            "bond_med": f"{Emotes.SR_BOND} Vital Draught",
+            "bond_large": f"{Emotes.SSR_BOND} Heart Elixirs",
+            "bond_ur": f"{Emotes.UR_BOND} Essence of Devotion",
             "SSR Token": f"{Emotes.SSRTOKEN} SSR Token",
         }
 
