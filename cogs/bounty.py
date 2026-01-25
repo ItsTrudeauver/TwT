@@ -178,7 +178,7 @@ class Bounty(commands.Cog):
         status_rows = await pool.fetch("SELECT slot_id, status FROM user_bounty_status WHERE user_id = $1", str(user_id))
         status_map = {r['slot_id']: r['status'] for r in status_rows}
         
-        embed = discord.Embed(title="⚔️ Bounty Hunt Dashboard", description=f"**Keys Available:** {keys}/3 🔑", color=0x3498db)
+        embed = discord.Embed(title="⚔️ Bounty Hunt Dashboard", description=f"**Keys Available:** {keys}/3 {Emotes.KEYS}", color=0x3498db)
         embed.set_footer(text="Select a target from the dropdown to begin.")
         
         view = HuntView(self.bot, user_id, bounty_data, status_map)
@@ -244,7 +244,7 @@ class Bounty(commands.Cog):
         ts = int(expires.timestamp())
 
         embed = discord.Embed(title="📜 Bounty Board Requests", color=0x8B4513)
-        embed.description = f"**Keys:** {keys}/3 🔑\n**Resets:** <t:{ts}:R>"
+        embed.description = f"**Keys:** {keys}/3 {Emotes.KEYS}\n**Resets:** <t:{ts}:R>"
         
         for row in rows:
             slot = row['slot_id']
