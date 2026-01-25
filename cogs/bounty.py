@@ -196,8 +196,6 @@ class Bounty(commands.Cog):
         embed = discord.Embed(title="⚔️ Bounty Hunt Dashboard", description=f"**Keys Available:** {keys}/3 {Emotes.KEYS}", color=0x3498db)
         embed.set_footer(text="Select a target from the dropdown to begin.")
         
-        # Note: No set_image here, keeping !hunt clean.
-        
         view = HuntView(self.bot, user_id, bounty_data, status_map)
         return embed, view
 
@@ -367,7 +365,20 @@ class Bounty(commands.Cog):
             
             # 2. Consume Key
             debug_log.append("STEP 2: Consume Key")
-            await pool.execute("UPDATE users SET bounty_keys = bounty_keys - 1 WHERE user_id = $1", user_id)
+            # FIX: Infinite Key Glitch Prevention
+            # If user is at max keys (3), their last_key_regen is likely very old (stale).
+            # If we simply subtract 1, the next regenerate_keys() call will see the old timestamp,
+            # calculate that 24+ hours have passed, and immediately refund the key.
+            # To fix this, if keys == 3, we must reset the timestamp to the current hour.
+            
+            if keys == 3:
+                # Snap to current hour (Minute 0). Next key will come at Minute 0 of the NEXT hour.
+                now = datetime.datetime.now(datetime.timezone.utc)
+                current_hour = now.replace(minute=0, second=0, microsecond=0)
+                await pool.execute("UPDATE users SET bounty_keys = 2, last_key_regen = $1 WHERE user_id = $2", current_hour, user_id)
+            else:
+                # Timer is already valid (they were below max), just decrement.
+                await pool.execute("UPDATE users SET bounty_keys = bounty_keys - 1 WHERE user_id = $1", user_id)
             
             # 3. Run Battle
             debug_log.append("STEP 3: Battle Execution")
