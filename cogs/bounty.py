@@ -278,7 +278,7 @@ class Bounty(commands.Cog):
         ts = int(expires.timestamp())
 
         embed = discord.Embed(title="📜 Bounty Board Requests", color=0x8B4513)
-        embed.description = f"**Keys:** {keys}/3 {Emotes.KEYS}\n**Resets:** <t:{ts}:R>"
+        embed.description = f"{keys}/3 {Emotes.KEYS}\n**Board resets in:** <t:{ts}:R>"
         
         for row in rows:
             slot = row['slot_id']
