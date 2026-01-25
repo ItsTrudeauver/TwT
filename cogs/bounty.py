@@ -161,7 +161,6 @@ class Bounty(commands.Cog):
                 new_keys = min(3, current_keys + hours_passed)
                 
                 # --- SYNC LOGIC: Snap the timer to the Top of the Hour ---
-                # Calculate the exact hour where regeneration happened
                 regen_point = last_regen + datetime.timedelta(hours=hours_passed)
                 # Snap to Minute 0, Second 0
                 new_last_regen = regen_point.replace(minute=0, second=0, microsecond=0)
@@ -244,12 +243,11 @@ class Bounty(commands.Cog):
         await self.bot.wait_until_ready()
         
         # 1. Initial Check: If board is empty (bot restart), fill it immediately.
-        # We don't want to wait 45 mins with an empty board just to sync.
         pool = await get_db_pool()
         rows = await pool.fetch("SELECT slot_id FROM bounty_board")
         if not rows:
             print("[Bounty] Board empty on startup, triggering immediate refresh...")
-            await self.bounty_refresh_loop.coro(self) # Manually call the routine once
+            await self.bounty_refresh_loop.coro(self)
 
         # 2. Calculate sleep time until next XX:00:00
         now = datetime.datetime.now()
@@ -278,7 +276,7 @@ class Bounty(commands.Cog):
         ts = int(expires.timestamp())
 
         embed = discord.Embed(title="📜 Bounty Board Requests", color=0x8B4513)
-        embed.description = f"{keys}/3 {Emotes.KEYS}\n**Board resets in:** <t:{ts}:R>"
+        embed.description = f"**Keys:** {keys}/3 {Emotes.KEYS}\n**Resets:** <t:{ts}:R>"
         
         for row in rows:
             slot = row['slot_id']
@@ -298,10 +296,12 @@ class Bounty(commands.Cog):
             enemy_team = json.loads(row['enemy_data'])
             power = sum(u['true_power'] for u in enemy_team)
             
+            # --- LAYOUT CHANGE HERE ---
+            # inline=True makes them stack horizontally (3 per row)
             embed.add_field(
                 name=f"Slot {slot}: {tier} Tier",
                 value=f"**Status:** {icon}\n**Power:** {power:,}\n**Reward:** {rewards}",
-                inline=False
+                inline=True  
             )
             
         embed.set_footer(text="Use !hunt to start a battle!")
