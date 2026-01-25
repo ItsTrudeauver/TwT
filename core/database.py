@@ -221,13 +221,16 @@ async def add_currency(user_id, amount):
 async def batch_add_to_inventory(user_id, characters):
     """
     Adds characters to inventory. Increments dupe_level up to 10.
-    If already at 10, scraps the character for gems based on rarity.
-    Returns total gems gained from scrapping.
+    If already at 10, scraps the character for gems AND COINS based on rarity.
+    Returns (total_gems, total_coins).
     """
     pool = await get_db_pool()
     # Define your scrap values here
     scrap_values = {"R": 100, "SR": 500, "SSR": 10000}
+    scrap_coins_values = {"R": 5, "SR": 25, "SSR": 500} # Matches manual scrap ratio (1 Coin = 20 Gems)
+    
     total_scrapped_gems = 0
+    total_scrapped_coins = 0
     
     async with pool.acquire() as conn:
         for char in characters:
@@ -255,15 +258,16 @@ async def batch_add_to_inventory(user_id, characters):
             else:
                 # At max dupes (10): add to scrap total
                 total_scrapped_gems += scrap_values.get(rarity, 0)
+                total_scrapped_coins += scrap_coins_values.get(rarity, 0)
         
-        # If any characters were scrapped, update the user's gem balance
-        if total_scrapped_gems > 0:
+        # If any characters were scrapped, update the user's gem and coin balance
+        if total_scrapped_gems > 0 or total_scrapped_coins > 0:
             await conn.execute(
-                "UPDATE users SET gacha_gems = gacha_gems + $1 WHERE user_id = $2", 
-                total_scrapped_gems, str(user_id)
+                "UPDATE users SET gacha_gems = gacha_gems + $1, coins = coins + $2 WHERE user_id = $3", 
+                total_scrapped_gems, total_scrapped_coins, str(user_id)
             )
             
-    return total_scrapped_gems
+    return total_scrapped_gems, total_scrapped_coins
 
 async def batch_cache_characters(chars):
     pool = await get_db_pool()

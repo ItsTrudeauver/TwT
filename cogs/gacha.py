@@ -251,7 +251,7 @@ class Gacha(commands.Cog):
             if not pulled_chars: return await loading.edit(content="❌ Database/API Error.")
 
             await batch_cache_characters(pulled_chars)
-            scrapped_gems = await batch_add_to_inventory(ctx.author.id, pulled_chars)
+            scrapped_gems, scrapped_coins = await batch_add_to_inventory(ctx.author.id, pulled_chars)
             
             # --- SINGLE PULL RESPONSE ---
             if amount == 1:
@@ -261,8 +261,13 @@ class Gacha(commands.Cog):
                 boosted_power = int(c['true_power'] * (1 + (dupe_lv * 0.05)))
                 
                 desc = f"**{c['rarity']}** | Power: **{boosted_power:,}** (Lv.{dupe_lv})"
-                if scrapped_gems > 0:
-                    desc += f"\n♻️ **Max Dupes!** Scrapped for **{scrapped_gems:,} {Emotes.GEMS}**"
+                
+                # UPDATED DISPLAY LOGIC
+                if scrapped_gems > 0 or scrapped_coins > 0:
+                    rewards = []
+                    if scrapped_gems > 0: rewards.append(f"**{scrapped_gems:,} {Emotes.GEMS}**")
+                    if scrapped_coins > 0: rewards.append(f"**{scrapped_coins:,} {Emotes.COINS}**")
+                    desc += f"\n♻️ **Max Dupes!** Scrapped for {' and '.join(rewards)}"
                 
                 # Title format: Spark Status | Character Name
                 title_text = f"{spark_status} | {c['name']}" if spark_status else f"✨ {c['name']}"
@@ -285,8 +290,12 @@ class Gacha(commands.Cog):
                 
                 embed.set_image(url="attachment://10pull.png")
                 
-                if scrapped_gems > 0:
-                    embed.description = f"♻️ **Auto-scrapped extras for {scrapped_gems:,} {Emotes.GEMS}!**"
+                # UPDATED DISPLAY LOGIC
+                if scrapped_gems > 0 or scrapped_coins > 0:
+                    rewards = []
+                    if scrapped_gems > 0: rewards.append(f"**{scrapped_gems:,} {Emotes.GEMS}**")
+                    if scrapped_coins > 0: rewards.append(f"**{scrapped_coins:,} {Emotes.COINS}**")
+                    embed.description = f"♻️ **Auto-scrapped extras for {' and '.join(rewards)}!**"
                 
                 file = discord.File(fp=img, filename="10pull.png")
                 await ctx.reply(file=file, embed=embed)
@@ -311,7 +320,7 @@ class Gacha(commands.Cog):
             if len(chars) < 10: return await loading.edit(content="❌ Sync Error.")
 
             await batch_cache_characters(chars)
-            scrapped_gems = await batch_add_to_inventory(ctx.author.id, chars)
+            scrapped_gems, scrapped_coins = await batch_add_to_inventory(ctx.author.id, chars)
             pool = await get_db_pool()
             await pool.execute("UPDATE users SET has_claimed_starter = TRUE WHERE user_id = $1", str(ctx.author.id))
             
