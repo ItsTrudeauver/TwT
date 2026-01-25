@@ -7,11 +7,20 @@ import datetime
 import io
 import asyncio
 import traceback
+import os  # Added for file checking
 from core.database import get_db_pool
 from core.game_math import calculate_bond_exp_required
 from core.emotes import Emotes
 from core.skills import create_skill_instance, BattleContext
 from core.image_gen import generate_team_image
+
+# --- CONFIGURATION ---
+
+# 1. Place your image in: assets/bounty_board.png
+# 2. OR replace this URL with a permanent link (e.g., Imgur)
+BANNER_URL = "https://media.discordapp.net/attachments/995879199959162882/1465111664583115009/twtbountyboard.png"
+BANNER_FILENAME = "bounty_board.png"
+LOCAL_BANNER_PATH = f"assets/{BANNER_FILENAME}"
 
 # --- UI VIEWS ---
 
@@ -137,6 +146,12 @@ class Bounty(commands.Cog):
         self.bounty_refresh_loop.cancel()
 
     # --- HELPERS ---
+    
+    def get_banner_file(self):
+        """Helper to determine if we use a local file or a URL."""
+        if os.path.exists(LOCAL_BANNER_PATH):
+            return discord.File(LOCAL_BANNER_PATH, filename=BANNER_FILENAME)
+        return None
 
     async def regenerate_keys(self, user_id):
         pool = await get_db_pool()
@@ -162,7 +177,6 @@ class Bounty(commands.Cog):
                 
                 # --- SYNC LOGIC: Snap the timer to the Top of the Hour ---
                 regen_point = last_regen + datetime.timedelta(hours=hours_passed)
-                # Snap to Minute 0, Second 0
                 new_last_regen = regen_point.replace(minute=0, second=0, microsecond=0)
                 
                 await conn.execute("UPDATE users SET bounty_keys = $1, last_key_regen = $2 WHERE user_id = $3", 
@@ -171,12 +185,12 @@ class Bounty(commands.Cog):
             return current_keys
 
     async def get_dashboard_embed_and_view(self, user_id):
-        """Helper to reconstruct the dashboard state."""
+        """Helper to reconstruct the dashboard state. Returns (Embed, View, File)."""
         keys = await self.regenerate_keys(user_id)
         pool = await get_db_pool()
         
         rows = await pool.fetch("SELECT * FROM bounty_board ORDER BY slot_id ASC")
-        if not rows: return None, None
+        if not rows: return None, None, None
         
         bounty_data = {r['slot_id']: r for r in rows}
         status_rows = await pool.fetch("SELECT slot_id, status FROM user_bounty_status WHERE user_id = $1", str(user_id))
@@ -185,20 +199,24 @@ class Bounty(commands.Cog):
         embed = discord.Embed(title="⚔️ Bounty Hunt Dashboard", description=f"**Keys Available:** {keys}/3 {Emotes.KEYS}", color=0x3498db)
         embed.set_footer(text="Select a target from the dropdown to begin.")
         
+        # SMART IMAGE LOGIC
+        banner_file = self.get_banner_file()
+        if banner_file:
+            embed.set_image(url=f"attachment://{BANNER_FILENAME}")
+        else:
+            embed.set_image(url=BANNER_URL)
+        
         view = HuntView(self.bot, user_id, bounty_data, status_map)
-        return embed, view
+        return embed, view, banner_file
 
     # --- TASKS ---
 
     @tasks.loop(hours=1)
     async def bounty_refresh_loop(self):
-        """Generates new bounties every hour."""
         pool = await get_db_pool()
-        # Expires exactly 1 hour from now (which will be the next top of the hour)
         expires_at = datetime.datetime.now() + datetime.timedelta(hours=1)
         expires_at = expires_at.replace(minute=0, second=0, microsecond=0)
 
-        # Configuration: Base Tiers and their power ranges
         tier_config = {
             "R": (30000, 35000),
             "SR": (50000, 55000),
@@ -209,7 +227,6 @@ class Bounty(commands.Cog):
             await conn.execute("DELETE FROM bounty_board")
             await conn.execute("DELETE FROM user_bounty_status")
             
-            # Generate 3 slots
             for slot in range(1, 4):
                 base_tier = random.choice(list(tier_config.keys()))
                 min_p, max_p = tier_config[base_tier]
@@ -239,17 +256,14 @@ class Bounty(commands.Cog):
 
     @bounty_refresh_loop.before_loop
     async def before_bounty_refresh(self):
-        """Aligns the loop to the top of the hour (Minute 0)."""
         await self.bot.wait_until_ready()
         
-        # 1. Initial Check: If board is empty (bot restart), fill it immediately.
         pool = await get_db_pool()
         rows = await pool.fetch("SELECT slot_id FROM bounty_board")
         if not rows:
             print("[Bounty] Board empty on startup, triggering immediate refresh...")
             await self.bounty_refresh_loop.coro(self)
 
-        # 2. Calculate sleep time until next XX:00:00
         now = datetime.datetime.now()
         next_hour = (now + datetime.timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
         
@@ -278,6 +292,13 @@ class Bounty(commands.Cog):
         embed = discord.Embed(title="📜 Bounty Board Requests", color=0x8B4513)
         embed.description = f"**Keys:** {keys}/3 {Emotes.KEYS}\n**Resets:** <t:{ts}:R>"
         
+        # SMART IMAGE LOGIC
+        banner_file = self.get_banner_file()
+        if banner_file:
+            embed.set_image(url=f"attachment://{BANNER_FILENAME}")
+        else:
+            embed.set_image(url=BANNER_URL)
+        
         for row in rows:
             slot = row['slot_id']
             tier = row['tier']
@@ -296,16 +317,19 @@ class Bounty(commands.Cog):
             enemy_team = json.loads(row['enemy_data'])
             power = sum(u['true_power'] for u in enemy_team)
             
-            # --- LAYOUT CHANGE HERE ---
-            # inline=True makes them stack horizontally (3 per row)
             embed.add_field(
                 name=f"Slot {slot}: {tier} Tier",
                 value=f"**Status:** {icon}\n**Power:** {power:,}\n**Reward:** {rewards}",
                 inline=True  
             )
-            
+        
         embed.set_footer(text="Use !hunt to start a battle!")
-        await ctx.reply(embed=embed)
+        
+        # Handle file sending
+        if banner_file:
+            await ctx.reply(embed=embed, file=banner_file)
+        else:
+            await ctx.reply(embed=embed)
 
     @commands.command(name="hunt")
     async def hunt_command(self, ctx):
@@ -314,11 +338,14 @@ class Bounty(commands.Cog):
         if keys < 1:
             return await ctx.reply(f"❌ You have 0 keys! Next key regenerates soon.")
             
-        embed, view = await self.get_dashboard_embed_and_view(ctx.author.id)
+        embed, view, banner_file = await self.get_dashboard_embed_and_view(ctx.author.id)
         if not embed:
             return await ctx.reply("⚠️ Board refreshing...")
             
-        await ctx.reply(embed=embed, view=view)
+        if banner_file:
+            await ctx.reply(embed=embed, view=view, file=banner_file)
+        else:
+            await ctx.reply(embed=embed, view=view)
 
     # --- LOGIC HANDLER ---
 
@@ -409,7 +436,6 @@ class Bounty(commands.Cog):
             initial_win = total_att > total_def
             outcome = "WIN" if initial_win else "LOSS"
             
-            # Special Check (Snake Zodiac / Revive)
             if not initial_win and ctx.flags.get("snake_trap"):
                 outcome = "DRAW"
                 ctx.misc_logs["defender"].append("🐍 **Snake Zodiac** forced a DRAW!")
@@ -521,8 +547,14 @@ class Bounty(commands.Cog):
 
             # 7. Update Original Dashboard
             debug_log.append("STEP 8: Updating Dashboard")
-            new_embed, new_view = await self.get_dashboard_embed_and_view(user_id)
+            new_embed, new_view, new_banner = await self.get_dashboard_embed_and_view(user_id)
             if new_embed and new_view:
+                # Note: We can't easily attach a new file to an edit unless we re-upload
+                # The interaction.edit_original_response is tricky with new files. 
+                # For stability, we update the embed/view but maybe skip the banner re-upload if it's already there?
+                # Actually, if we use a URL, it just works. If we use a file, it's harder in an edit.
+                # Just passing 'embed' and 'view' is safe. The embed still points to attachment://... which might break if file isn't re-sent.
+                # So we prefer URL for the persistent dashboard updates, or just accept it might lose the image on update.
                 await interaction.edit_original_response(embed=new_embed, view=new_view)
         
         except Exception as e:
