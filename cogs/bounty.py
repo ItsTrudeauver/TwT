@@ -413,8 +413,14 @@ class Bounty(commands.Cog):
                         "bond_med": "Vital Draught",
                         "bond_large": "Heart Elixirs"
                     }
+                    emote_map ={
+                        "bond_small": Emotes.R_BOND,
+                        "bond_med": Emotes.SR_BOND,
+                        "bond_large": Emotes.SSR_BOND
+                    }
                     display_name = name_map.get(item_id, item_id.replace('_', ' ').title())
-                    loot_text = f"1x {display_name}"
+                    display_emote = emote_map.get(item_id, "")
+                    loot_text = f"1x {display_name} {display_emote}"
                     
                     await pool.execute(f"INSERT INTO user_items (user_id, item_id, quantity) VALUES ($1, $2, 1) ON CONFLICT (user_id, item_id) DO UPDATE SET quantity = user_items.quantity + 1", user_id, item_id)
 
