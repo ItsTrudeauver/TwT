@@ -81,7 +81,7 @@ class InventoryView(discord.ui.View):
                 # Dupe & Bond indicators
                 meta_text = ""
                 if row['dupe_level'] > 0: meta_text += f" (+{row['dupe_level']})"
-                if row['bond_level'] > 0: meta_text += f" ♥{row['bond_level']}"
+                if row['bond_level'] > 0: meta_text += f" {Emotes.BOND}{row['bond_level']}"
                 
                 embed.description += f"`#{row['id']}` {lock} **{row['name']}**{meta_text} {rarity_emote} — ⚔️ `{row['true_power']:,}`\n"
 

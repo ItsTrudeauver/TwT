@@ -17,4 +17,5 @@ class Emotes:
     UR_BOND = "<:ur_affinity:1464790588514894049>" 
     # MISC 
     KEYS = "<:battle_key:1464945585948725259>"
+    BOND = "<:bond:1465107951386628146>"
     
