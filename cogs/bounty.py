@@ -26,26 +26,27 @@ class HuntView(View):
 
         # 1. Dropdown: Select Target
         options = []
-        for slot, data in bounty_data.items():
-            status = user_status_map.get(slot, "AVAILABLE")
-            
-            if status == "AVAILABLE":
-                label = f"Slot {slot}: {data['tier']} Tier"
-                desc = "Select to lock target"
-                emoji = "🟥" 
-            else:
-                label = f"Slot {slot}: {data['tier']} ({status})"
-                desc = "Already attempted"
-                emoji = "✅" if status == "COMPLETED" else "❌"
+        if bounty_data:
+            for slot, data in bounty_data.items():
+                status = user_status_map.get(slot, "AVAILABLE")
+                
+                if status == "AVAILABLE":
+                    label = f"Slot {slot}: {data['tier']} Tier"
+                    desc = "Select to lock target"
+                    emoji = "🟥" 
+                else:
+                    label = f"Slot {slot}: {data['tier']} ({status})"
+                    desc = "Already attempted"
+                    emoji = "✅" if status == "COMPLETED" else "❌"
 
-            # Only allow selecting Available ones for the hunt interaction
-            if status == "AVAILABLE":
-                options.append(discord.SelectOption(
-                    label=label,
-                    value=str(slot),
-                    description=desc,
-                    emoji=emoji
-                ))
+                # Only allow selecting Available ones for the hunt interaction
+                if status == "AVAILABLE":
+                    options.append(discord.SelectOption(
+                        label=label,
+                        value=str(slot),
+                        description=desc,
+                        emoji=emoji
+                    ))
 
         if not options:
             options.append(discord.SelectOption(label="No Targets Available", value="none", description="Wait for reset or check back later."))
@@ -88,21 +89,24 @@ class HuntView(View):
         total_power = sum(u['true_power'] for u in team)
         
         # Update Embed to show "Target Locked" state
-        embed = interaction.message.embeds[0]
-        embed.color = 0xE74C3C # Red for danger
-        embed.clear_fields()
-        
-        embed.add_field(name="🎯 Target Locked", value=f"**Slot {self.selected_slot} ({data['tier']})**", inline=True)
-        embed.add_field(name="⚠️ Enemy Power", value=f"**{total_power:,}**", inline=True)
-        
-        roster = "\n".join([f"• {u['name']} (Pow: {u['true_power']:,})" for u in team])
-        embed.add_field(name="Enemy Team Intelligence", value=roster, inline=False)
-        
-        embed.set_footer(text="Press FIGHT to consume 1 Key and start battle.")
+        try:
+            embed = interaction.message.embeds[0]
+            embed.color = 0xE74C3C # Red for danger
+            embed.clear_fields()
+            
+            embed.add_field(name="🎯 Target Locked", value=f"**Slot {self.selected_slot} ({data['tier']})**", inline=True)
+            embed.add_field(name="⚠️ Enemy Power", value=f"**{total_power:,}**", inline=True)
+            
+            roster = "\n".join([f"• {u['name']} (Pow: {u['true_power']:,})" for u in team])
+            embed.add_field(name="Enemy Team Intelligence", value=roster, inline=False)
+            
+            embed.set_footer(text="Press FIGHT to consume 1 Key and start battle.")
 
-        # Enable Fight Button
-        self.fight_btn.disabled = False
-        await interaction.response.edit_message(embed=embed, view=self)
+            # Enable Fight Button
+            self.fight_btn.disabled = False
+            await interaction.response.edit_message(embed=embed, view=self)
+        except Exception as e:
+            await interaction.response.send_message(f"UI Error: {e}", ephemeral=True)
 
     async def fight_callback(self, interaction: discord.Interaction):
         if not self.selected_slot: return
@@ -282,12 +286,14 @@ class Bounty(commands.Cog):
     # --- LOGIC HANDLER ---
 
     async def process_hunt(self, interaction, slot_id, bounty_row):
-        """Handles the actual fight logic."""
+        """Handles the actual fight logic with robust error reporting."""
         user_id = str(interaction.user.id)
         pool = await get_db_pool()
+        debug_log = ["INIT: Starting process_hunt"]
         
         try:
             # 1. Validation
+            debug_log.append("STEP 1: Validation")
             keys = await self.regenerate_keys(user_id)
             if keys < 1:
                 return await interaction.followup.send("❌ No keys left! Did you use one elsewhere?", ephemeral=True)
@@ -300,12 +306,18 @@ class Bounty(commands.Cog):
             if not attacker_team: 
                 return await interaction.followup.send("❌ You need a team! Use `!team` to set one up.", ephemeral=True)
             
+            if not bounty_row or 'enemy_data' not in bounty_row:
+                 raise ValueError(f"Bounty Row invalid for slot {slot_id}")
+            
             defender_team = json.loads(bounty_row['enemy_data'])
+            debug_log.append(f"Validation Passed. Attacker: {len(attacker_team)}, Defender: {len(defender_team)}")
             
             # 2. Consume Key
+            debug_log.append("STEP 2: Consume Key")
             await pool.execute("UPDATE users SET bounty_keys = bounty_keys - 1 WHERE user_id = $1", user_id)
             
             # 3. Run Battle
+            debug_log.append("STEP 3: Battle Execution")
             ctx = BattleContext(attacker_team, defender_team)
 
             # -- Initialize Skills --
@@ -343,7 +355,6 @@ class Bounty(commands.Cog):
                     power += ctx.flat_bonuses[side][i]
                     
                     # Apply Variance
-                    # Check for override (Dragon Zodiac)
                     variance_val = ctx.flags.get("variance_override", {}).get(f"{side}_{i}", None)
                     if variance_val is None:
                         variance_val = random.uniform(0.9, 1.1)
@@ -369,7 +380,6 @@ class Bounty(commands.Cog):
             if outcome == "LOSS":
                  for s in all_skills:
                      if s.side == "attacker":
-                         # Check on_battle_end modifiers (Revive)
                          new_res = await s.on_battle_end(ctx, outcome)
                          if new_res: 
                              outcome = new_res
@@ -377,15 +387,17 @@ class Bounty(commands.Cog):
 
             # -- Status Update --
             final_status = "COMPLETED" if outcome == "WIN" else "FAILED"
-            if outcome == "DRAW": final_status = "FAILED" # Treat draw as fail for bounty purposes? Or allow retry? 
-            # Usually Bounties require a WIN.
+            if outcome == "DRAW": final_status = "FAILED" 
             
+            debug_log.append(f"Battle Outcome: {outcome} ({total_att} vs {total_def})")
+
             await pool.execute("""
                 INSERT INTO user_bounty_status (user_id, slot_id, status) VALUES ($1, $2, $3)
                 ON CONFLICT (user_id, slot_id) DO UPDATE SET status = $3
             """, user_id, slot_id, final_status)
             
             # 4. Rewards
+            debug_log.append("STEP 4: Rewards")
             loot_text = "None"
             if outcome == "WIN":
                 tier = bounty_row['tier']
@@ -401,21 +413,18 @@ class Bounty(commands.Cog):
                     
                     await pool.execute(f"INSERT INTO user_items (user_id, item_id, quantity) VALUES ($1, $2, 1) ON CONFLICT (user_id, item_id) DO UPDATE SET quantity = user_items.quantity + 1", user_id, item_id)
 
-            # 5. Collect Logs (THE FIX)
-            # We aggregate logs from the Context, avoiding manual object access
+            # 5. Collect Logs
+            debug_log.append("STEP 5: Processing Logs")
             combined_logs = []
-            
-            # Add Global/Misc Logs first
             if ctx.misc_logs['attacker']: combined_logs.extend(ctx.misc_logs['attacker'])
             if ctx.misc_logs['defender']: combined_logs.extend(ctx.misc_logs['defender'])
-            
-            # Add Slot-specific logs
             for side in ['attacker', 'defender']:
                 for slot_idx in sorted(ctx.logs[side].keys()):
                     for msg in ctx.logs[side][slot_idx]:
                         combined_logs.append(msg)
 
             # 6. Generate Result UI
+            debug_log.append("STEP 6: Generating UI")
             color = 0x2ECC71 if outcome == "WIN" else 0xE74C3C
             if outcome == "DRAW": color = 0xF1C40F
 
@@ -425,10 +434,9 @@ class Bounty(commands.Cog):
             )
             result_embed.add_field(name="Your Power", value=f"{total_att:,}", inline=True)
             result_embed.add_field(name="Enemy Power", value=f"{total_def:,}", inline=True)
-            result_embed.add_field(name="Loot", value=loot_text, inline=False)
+            result_embed.add_field(name="Loot", value=str(loot_text), inline=False) # Ensure string
             
             if combined_logs:
-                # Deduplicate and limit length
                 unique_logs = list(dict.fromkeys(combined_logs))
                 log_str = "\n".join(unique_logs)
                 if len(log_str) > 1000: log_str = log_str[:995] + "..."
@@ -438,25 +446,36 @@ class Bounty(commands.Cog):
 
             file = None
             if outcome == "WIN":
-                # Attempt Image Generation
+                debug_log.append("STEP 6a: Generating Image")
                 try:
                     img_bytes = await generate_team_image(attacker_team)
-                    file = discord.File(io.BytesIO(img_bytes), filename="victory.png")
-                    result_embed.set_image(url="attachment://victory.png")
+                    if img_bytes:
+                        file = discord.File(io.BytesIO(img_bytes), filename="victory.png")
+                        result_embed.set_image(url="attachment://victory.png")
                 except Exception as img_err:
                     print(f"Image Gen Error: {img_err}")
+                    debug_log.append(f"Image Gen Warning: {img_err}")
 
             # Send the Result (New Message)
+            debug_log.append("STEP 7: Sending Result")
             await interaction.followup.send(embed=result_embed, file=file)
 
             # 7. Update Original Dashboard (Lock the Slot)
+            debug_log.append("STEP 8: Updating Dashboard")
             new_embed, new_view = await self.get_dashboard_embed_and_view(user_id)
-            if new_embed:
+            if new_embed and new_view:
                 await interaction.edit_original_response(embed=new_embed, view=new_view)
+            else:
+                debug_log.append("Warning: Could not refresh dashboard (embed/view is None)")
         
         except Exception as e:
             traceback.print_exc()
-            await interaction.followup.send(f"❌ An error occurred during the battle: {e}", ephemeral=True)
+            error_report = f"❌ **Battle Error Report**\n**Exception:** `{type(e).__name__}: {e}`\n\n**Process Log:**\n" + "\n".join([f"`{x}`" for x in debug_log])
+            if len(error_report) > 1900: error_report = error_report[:1900] + "..."
+            try:
+                await interaction.followup.send(error_report, ephemeral=True)
+            except:
+                print(error_report) # Fallback to console
 
     @commands.command(name="gift")
     async def gift_bond(self, ctx, char_id: int, item_alias: str):
