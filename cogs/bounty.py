@@ -444,11 +444,20 @@ class Bounty(commands.Cog):
             else:
                  result_embed.add_field(name="Battle Log", value="*No significant events.*", inline=False)
 
+            # 6a. Generate Image
             file = None
             if outcome == "WIN":
                 debug_log.append("STEP 6a: Generating Image")
                 try:
-                    img_bytes = await generate_team_image(attacker_team)
+                    # FIX: Map 'true_power' to 'power' for image generator
+                    img_team_data = []
+                    for m in attacker_team:
+                        d = m.copy()
+                        if 'power' not in d and 'true_power' in d:
+                            d['power'] = d['true_power']
+                        img_team_data.append(d)
+
+                    img_bytes = await generate_team_image(img_team_data)
                     if img_bytes:
                         file = discord.File(io.BytesIO(img_bytes), filename="victory.png")
                         result_embed.set_image(url="attachment://victory.png")
@@ -458,7 +467,16 @@ class Bounty(commands.Cog):
 
             # Send the Result (New Message)
             debug_log.append("STEP 7: Sending Result")
-            await interaction.followup.send(embed=result_embed, file=file)
+            
+            # FIX: Construct args to avoid passing file=None which triggers NoneType error in some d.py versions
+            send_kwargs = {"embed": result_embed}
+            if file:
+                send_kwargs["file"] = file
+            
+            if result_embed:
+                await interaction.followup.send(**send_kwargs)
+            else:
+                debug_log.append("CRITICAL: Embed was None")
 
             # 7. Update Original Dashboard (Lock the Slot)
             debug_log.append("STEP 8: Updating Dashboard")
