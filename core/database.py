@@ -64,6 +64,35 @@ async def init_db():
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_boat_pulls INTEGER DEFAULT 0;")
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_boat_pull_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;")
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS boat_credits_spent BIGINT DEFAULT 0;")
+        # --- BOUNTY BOARD & BOND SYSTEM ---
+        
+        # 1. Update Inventory for Bonds
+        await conn.execute("ALTER TABLE inventory ADD COLUMN IF NOT EXISTS bond_exp INTEGER DEFAULT 0;")
+        await conn.execute("ALTER TABLE inventory ADD COLUMN IF NOT EXISTS bond_level INTEGER DEFAULT 1;")
+        
+        # 2. Update Users for Bounty Keys
+        await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS bounty_keys INTEGER DEFAULT 3;")
+        await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_key_regen TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;")
+
+        # 3. Bounty Board Table (Shared Server State)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS bounty_board (
+                slot_id INTEGER PRIMARY KEY,
+                enemy_data JSONB,
+                tier TEXT,
+                expires_at TIMESTAMP
+            );
+        """)
+
+        # 4. User Status for Bounty Board (Tracks completion)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_bounty_status (
+                user_id TEXT,
+                slot_id INTEGER,
+                status TEXT, -- 'AVAILABLE', 'COMPLETED', 'FAILED'
+                PRIMARY KEY (user_id, slot_id)
+            );
+        """)
         
         # NEW: Coins Currency
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS coins INTEGER DEFAULT 0;")

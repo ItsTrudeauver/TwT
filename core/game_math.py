@@ -46,6 +46,21 @@ def calculate_effective_power(raw_favs, rarity="R", rank=10000):
         raw_power = 4000 + (favs / 2)
         return squash_with_caps(raw_power, 5000, 6250)
 
+def calculate_bond_exp_required(current_level):
+    """
+    Returns the EXP required to move from current_level to current_level + 1.
+    Formula: 50 + 50 * (CurrentLevel - 1)
+    """
+    return 50 + 50 * (current_level - 1)
+
+def calculate_bond_multiplier(level):
+    """
+    Returns the power multiplier for a given bond level.
+    Formula: 1 + (BondLevel * 0.005)
+    Example: Level 50 -> 1.25x (25% boost)
+    """
+    return 1 + (level * 0.005)
+
 def calculate_team_power(team_list):
     """
     Calculates total power including a 5% boost per duplicate 

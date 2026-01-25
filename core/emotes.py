@@ -6,9 +6,11 @@ class Emotes:
     COINS = "<:coins:1464359906713927765>"
     SSRTOKEN = "<:SSRToken:1464467899346583849>"
     SPARK = "<:Spark:1464571380875133122>"
+    # Rarities
     R = "<:r_rare:1464594333159264462>"
     SR = "<:sr_rare:1464594480077344884>"
     SSR = "<:ssr_rare:1464594609853431970>"
+    # Rarity Bonds
     R_BOND = "<:r_affinity:1464790452443025571>"
     SR_BOND = "<:sr_affinity:1464790481727652018>"
     SSR_BOND = "<:ssr_affinity:1464790554784039124>"

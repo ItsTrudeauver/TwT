@@ -30,8 +30,13 @@ class Battle(commands.Cog):
             chars = await conn.fetch("""
                 SELECT 
                     i.id, c.anilist_id, c.name, 
-                    FLOOR(c.true_power * (1 + (COALESCE(i.dupe_level, 0) * 0.05)) * (1 + (COALESCE(u.team_level, 1) * 0.01)))::int as true_power, 
-                    i.dupe_level, c.ability_tags, c.rarity, c.rank, c.image_url 
+                    FLOOR(
+                        c.true_power 
+                        * (1 + (COALESCE(i.dupe_level, 0) * 0.05)) 
+                        * (1 + (COALESCE(u.team_level, 1) * 0.01))
+                        * (1 + (COALESCE(i.bond_level, 1) * 0.005)) -- Added Bond Multiplier
+                    )::int as true_power, 
+                    i.dupe_level, i.bond_level, c.ability_tags, c.rarity, c.rank, c.image_url 
                 FROM inventory i 
                 JOIN characters_cache c ON i.anilist_id = c.anilist_id
                 LEFT JOIN users u ON i.user_id = u.user_id 

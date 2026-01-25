@@ -54,7 +54,12 @@ class InventoryView(discord.ui.View):
                 c.rarity, 
                 i.is_locked, 
                 i.dupe_level,
-                FLOOR(c.true_power * (1 + (i.dupe_level * 0.05))) as true_power
+                i.bond_level,
+                FLOOR(
+                    c.true_power 
+                    * (1 + (i.dupe_level * 0.05))
+                    * (1 + (i.bond_level * 0.005))
+                ) as true_power
             FROM inventory i
             JOIN characters_cache c ON i.anilist_id = c.anilist_id
             WHERE i.user_id = $1
