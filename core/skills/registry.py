@@ -137,8 +137,8 @@ SKILL_DATA = {
         # Logic is handled in reward distribution, not power calc
     },
     "The Joker": {
-        "description": "In battle, increase or decrease this character's power by 80%.",
-        "value": 0.8,
+        "description": "In battle, increase or decrease this character's power by 75%.",
+        "value": 0.75,
         "applies_in": "b",
         "stackable": False,
         "overlap": True,
