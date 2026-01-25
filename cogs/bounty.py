@@ -6,6 +6,7 @@ import random
 import datetime
 import io
 import asyncio
+import traceback
 from core.database import get_db_pool
 from core.game_math import calculate_bond_exp_required
 from core.emotes import Emotes
@@ -16,7 +17,7 @@ from core.image_gen import generate_team_image
 
 class HuntView(View):
     def __init__(self, bot, user_id, bounty_data, user_status_map):
-        super().__init__(timeout=60)
+        super().__init__(timeout=180)
         self.bot = bot
         self.user_id = user_id
         self.bounty_data = bounty_data
@@ -28,30 +29,34 @@ class HuntView(View):
         for slot, data in bounty_data.items():
             status = user_status_map.get(slot, "AVAILABLE")
             
-            # Only show fightable options (or show status in label)
             if status == "AVAILABLE":
                 label = f"Slot {slot}: {data['tier']} Tier"
                 desc = "Select to lock target"
+                emoji = "🟥" 
             else:
-                # Skip completed/failed or mark them
-                continue 
+                label = f"Slot {slot}: {data['tier']} ({status})"
+                desc = "Already attempted"
+                emoji = "✅" if status == "COMPLETED" else "❌"
 
-            options.append(discord.SelectOption(
-                label=label,
-                value=str(slot),
-                description=desc,
-                emoji="🎯"
-            ))
+            # Only allow selecting Available ones
+            if status == "AVAILABLE":
+                options.append(discord.SelectOption(
+                    label=label,
+                    value=str(slot),
+                    description=desc,
+                    emoji=emoji
+                ))
 
         if not options:
-            options.append(discord.SelectOption(label="No Available Targets", value="none", description="Check back later!"))
+            options.append(discord.SelectOption(label="No Targets Available", value="none", description="Wait for reset or check back later."))
 
         self.select = Select(
             placeholder="🔍 Select a Bounty Target...",
             min_values=1, 
             max_values=1, 
             options=options,
-            row=0
+            row=0,
+            disabled=(len(options) == 1 and options[0].value == "none")
         )
         self.select.callback = self.select_callback
         self.add_item(self.select)
@@ -75,7 +80,7 @@ class HuntView(View):
     async def select_callback(self, interaction: discord.Interaction):
         val = self.select.values[0]
         if val == "none":
-            return await interaction.response.send_message("No valid target selected.", ephemeral=True)
+            return await interaction.response.send_message("No valid target available.", ephemeral=True)
             
         self.selected_slot = int(val)
         data = self.bounty_data[self.selected_slot]
@@ -97,21 +102,24 @@ class HuntView(View):
 
         # Enable Fight Button
         self.fight_btn.disabled = False
-        
         await interaction.response.edit_message(embed=embed, view=self)
 
     async def fight_callback(self, interaction: discord.Interaction):
         if not self.selected_slot: return
 
-        # Lock UI
+        # Lock UI immediately to prevent double clicks
         self.select.disabled = True
         self.fight_btn.disabled = True
-        self.fight_btn.label = "⚔️ BATTLE IN PROGRESS..."
+        self.fight_btn.label = "⏳ BATTLE IN PROGRESS..."
+        self.fight_btn.style = discord.ButtonStyle.secondary
         await interaction.response.edit_message(view=self)
         
-        # Handover to Cog
+        # Handover to Cog for processing
         cog = self.bot.get_cog("Bounty")
-        await cog.process_hunt(interaction, self.selected_slot, self.bounty_data[self.selected_slot])
+        if cog:
+            await cog.process_hunt(interaction, self.selected_slot, self.bounty_data[self.selected_slot])
+        else:
+            await interaction.followup.send("❌ Error: Bounty system not found.", ephemeral=True)
 
 
 # --- MAIN COG ---
@@ -147,12 +155,29 @@ class Bounty(commands.Cog):
             
             if hours_passed > 0:
                 new_keys = min(3, current_keys + hours_passed)
-                # Advance last_regen by exact hours to keep minute offset
                 new_last_regen = last_regen + datetime.timedelta(hours=hours_passed)
                 await conn.execute("UPDATE users SET bounty_keys = $1, last_key_regen = $2 WHERE user_id = $3", 
                                    new_keys, new_last_regen, str(user_id))
                 return new_keys
             return current_keys
+
+    async def get_dashboard_embed_and_view(self, user_id):
+        """Helper to reconstruct the dashboard state."""
+        keys = await self.regenerate_keys(user_id)
+        pool = await get_db_pool()
+        
+        rows = await pool.fetch("SELECT * FROM bounty_board ORDER BY slot_id ASC")
+        if not rows: return None, None
+        
+        bounty_data = {r['slot_id']: r for r in rows}
+        status_rows = await pool.fetch("SELECT slot_id, status FROM user_bounty_status WHERE user_id = $1", str(user_id))
+        status_map = {r['slot_id']: r['status'] for r in status_rows}
+        
+        embed = discord.Embed(title="⚔️ Bounty Hunt Dashboard", description=f"**Keys Available:** {keys}/3 🔑", color=0x3498db)
+        embed.set_footer(text="Select a target from the dropdown to begin.")
+        
+        view = HuntView(self.bot, user_id, bounty_data, status_map)
+        return embed, view
 
     # --- TASKS ---
 
@@ -173,20 +198,19 @@ class Bounty(commands.Cog):
             await conn.execute("DELETE FROM user_bounty_status")
             
             for slot, tier, min_p, max_p in configs:
-                # 1% Chance for UR Boss
                 is_ur = random.random() < 0.01
                 final_tier = "UR" if is_ur else tier
                 total_power = 90000 if is_ur else random.randint(min_p, max_p)
                 
-                # Generate Mock Team (5 members, equal power split)
+                # Mock Team Generation
                 member_power = total_power // 5
                 team_data = []
                 for i in range(5):
                     team_data.append({
-                        'name': f"{final_tier} Bounty Unit",
+                        'name': f"{final_tier} Enemy",
                         'true_power': member_power,
                         'rarity': final_tier,
-                        'ability_tags': [], # No complex skills for mobs yet
+                        'ability_tags': [], 
                         'image_url': None
                     })
                 
@@ -221,12 +245,10 @@ class Bounty(commands.Cog):
             tier = row['tier']
             status = status_map.get(slot, "AVAILABLE")
             
-            # Icons
             if status == "COMPLETED": icon = "✅ Completed"
             elif status == "FAILED": icon = "❌ Failed"
             else: icon = "⚔️ Available"
             
-            # Rewards Text
             if tier == "UR": rewards = "**UR Bond**, 50 Coins, 5k Gems"
             else: rewards = {1: "Small Bond", 2: "Med Bond", 3: "Large Bond"}.get(slot, "Gift")
             
@@ -249,139 +271,143 @@ class Bounty(commands.Cog):
         if keys < 1:
             return await ctx.reply(f"❌ You have 0 keys! Next key regenerates soon.")
             
-        pool = await get_db_pool()
-        rows = await pool.fetch("SELECT * FROM bounty_board ORDER BY slot_id ASC")
-        if not rows: return await ctx.reply("⚠️ Board refreshing...")
-        
-        bounty_data = {r['slot_id']: r for r in rows}
-        status_rows = await pool.fetch("SELECT slot_id, status FROM user_bounty_status WHERE user_id = $1", str(ctx.author.id))
-        status_map = {r['slot_id']: r['status'] for r in status_rows}
-        
-        # Initial Embed
-        embed = discord.Embed(title="⚔️ Bounty Hunt", description="Select a target from the dropdown below to preview details.", color=0x3498db)
-        embed.set_footer(text=f"Keys Available: {keys}/3")
-        
-        view = HuntView(self.bot, ctx.author.id, bounty_data, status_map)
+        embed, view = await self.get_dashboard_embed_and_view(ctx.author.id)
+        if not embed:
+            return await ctx.reply("⚠️ Board refreshing...")
+            
         await ctx.reply(embed=embed, view=view)
 
     # --- LOGIC HANDLER ---
 
     async def process_hunt(self, interaction, slot_id, bounty_row):
-        """Handles the actual fight logic after the user clicks 'FIGHT'."""
+        """Handles the actual fight logic."""
         user_id = str(interaction.user.id)
         pool = await get_db_pool()
         
-        # 1. Final Key Check
-        keys = await self.regenerate_keys(user_id)
-        if keys < 1:
-             return await interaction.followup.send("❌ No keys left! (Someone else used it?)", ephemeral=True)
-        
-        # 2. Get Teams
-        battle_cog = self.bot.get_cog("Battle")
-        if not battle_cog: return await interaction.followup.send("❌ Battle System Error.")
-        
-        attacker_team = await battle_cog.get_team_for_battle(int(user_id))
-        if not attacker_team: return await interaction.followup.send("❌ You need a team! Use `!team` to set one up.")
-        
-        defender_team = json.loads(bounty_row['enemy_data'])
-        
-        # 3. Consume Key
-        await pool.execute("UPDATE users SET bounty_keys = bounty_keys - 1 WHERE user_id = $1", user_id)
-        
-        # 4. Battle Engine
-        ctx = BattleContext(attacker_team, defender_team)
-        skill_logs = []
+        try:
+            # 1. Validation
+            keys = await self.regenerate_keys(user_id)
+            if keys < 1:
+                return await interaction.followup.send("❌ No keys left! Did you use one elsewhere?", ephemeral=True)
+            
+            battle_cog = self.bot.get_cog("Battle")
+            if not battle_cog: 
+                return await interaction.followup.send("❌ Battle System Error: Cog not loaded.", ephemeral=True)
+            
+            attacker_team = await battle_cog.get_team_for_battle(int(user_id))
+            if not attacker_team: 
+                return await interaction.followup.send("❌ You need a team! Use `!team` to set one up.", ephemeral=True)
+            
+            defender_team = json.loads(bounty_row['enemy_data'])
+            
+            # 2. Consume Key
+            await pool.execute("UPDATE users SET bounty_keys = bounty_keys - 1 WHERE user_id = $1", user_id)
+            
+            # 3. Run Battle
+            ctx = BattleContext(attacker_team, defender_team)
+            skill_logs = []
 
-        # -- Initialize Skills --
-        all_skills = []
-        for side, team in [("attacker", attacker_team), ("defender", defender_team)]:
-            for i, char in enumerate(team):
-                if not char: continue
-                tags = char.get('ability_tags', [])
-                if isinstance(tags, str): tags = json.loads(tags)
-                for tag in tags:
-                    s = create_skill_instance(tag, char, i, side)
-                    if s: all_skills.append(s)
+            # -- Initialize Skills --
+            all_skills = []
+            for side, team in [("attacker", attacker_team), ("defender", defender_team)]:
+                for i, char in enumerate(team):
+                    if not char: continue
+                    tags = char.get('ability_tags', [])
+                    if isinstance(tags, str): tags = json.loads(tags)
+                    for tag in tags:
+                        s = create_skill_instance(tag, char, i, side)
+                        if s: all_skills.append(s)
 
-        # -- Start --
-        for s in all_skills: await s.on_battle_start(ctx)
-        
-        # -- Power Calculation --
-        final_powers = {"attacker": [], "defender": []}
-        for side in ["attacker", "defender"]:
-            team = ctx.get_team(side)
-            for i, char in enumerate(team):
-                if not char:
-                    final_powers[side].append(0)
-                    continue
-                
-                power = char['true_power']
-                # Apply Skill Modifiers
-                for s in all_skills:
-                    if s.side == side and s.idx == i:
-                        mod = await s.get_power_modifier(ctx, power)
-                        power *= mod
-                        
-                # Variance (0.9 - 1.1)
-                variance = random.uniform(0.9, 1.1)
-                final_powers[side].append(int(power * variance))
-        
-        # -- Post Calc / Logging --
-        # Simple log simulation since skill engine might not return strings directly
-        for s in all_skills:
-            # If skill did something significant, log it. 
-            # For this draft, we just list active skills on the winner's side for flavor
-            if s.side == "attacker":
-                skill_logs.append(f"✨ {s.char['name']} used **{s.tag}**")
+            # -- Start Phase --
+            for s in all_skills: await s.on_battle_start(ctx)
+            
+            # -- Power Calculation --
+            final_powers = {"attacker": [], "defender": []}
+            for side in ["attacker", "defender"]:
+                team = ctx.get_team(side)
+                for i, char in enumerate(team):
+                    if not char:
+                        final_powers[side].append(0)
+                        continue
+                    
+                    power = char['true_power']
+                    # Apply Skill Modifiers
+                    for s in all_skills:
+                        if s.side == side and s.idx == i:
+                            mod = await s.get_power_modifier(ctx, power)
+                            power *= mod
+                            
+                    variance = random.uniform(0.9, 1.1)
+                    final_powers[side].append(int(power * variance))
+            
+            # -- Post Calc / Log Simulation --
+            for s in all_skills:
+                if s.side == "attacker":
+                    skill_logs.append(f"✨ {s.char['name']} used **{s.tag}**")
 
-        total_att = sum(final_powers["attacker"])
-        total_def = sum(final_powers["defender"])
-        
-        win = total_att > total_def
-        outcome = "COMPLETED" if win else "FAILED"
-        
-        # 5. Save Status
-        await pool.execute("""
-            INSERT INTO user_bounty_status (user_id, slot_id, status) VALUES ($1, $2, $3)
-            ON CONFLICT (user_id, slot_id) DO UPDATE SET status = $3
-        """, user_id, slot_id, outcome)
-        
-        # 6. Rewards
-        loot_text = "None"
-        if win:
-            tier = bounty_row['tier']
-            if tier == "UR":
-                await pool.execute("UPDATE users SET coins = coins + 50, gacha_gems = gacha_gems + 5000 WHERE user_id = $1", user_id)
-                # UR Bond
-                await pool.execute("INSERT INTO user_items (user_id, item_id, quantity) VALUES ($1, 'bond_ur', 1) ON CONFLICT (user_id, item_id) DO UPDATE SET quantity = user_items.quantity + 1", user_id)
-                loot_text = f"**UR Bond** {Emotes.UR_BOND}, 50 Coins, 5000 Gems"
-            else:
-                item_map = {1: "bond_small", 2: "bond_med", 3: "bond_large"}
-                item_id = item_map.get(slot_id, "bond_small")
-                loot_text = f"1x {item_id.replace('_', ' ').title()}"
-                
-                await pool.execute(f"INSERT INTO user_items (user_id, item_id, quantity) VALUES ($1, $2, 1) ON CONFLICT (user_id, item_id) DO UPDATE SET quantity = user_items.quantity + 1", user_id, item_id)
+            total_att = sum(final_powers["attacker"])
+            total_def = sum(final_powers["defender"])
+            
+            win = total_att > total_def
+            outcome = "COMPLETED" if win else "FAILED"
+            
+            # 4. Save Status
+            await pool.execute("""
+                INSERT INTO user_bounty_status (user_id, slot_id, status) VALUES ($1, $2, $3)
+                ON CONFLICT (user_id, slot_id) DO UPDATE SET status = $3
+            """, user_id, slot_id, outcome)
+            
+            # 5. Distribute Rewards
+            loot_text = "None"
+            if win:
+                tier = bounty_row['tier']
+                if tier == "UR":
+                    await pool.execute("UPDATE users SET coins = coins + 50, gacha_gems = gacha_gems + 5000 WHERE user_id = $1", user_id)
+                    await pool.execute("INSERT INTO user_items (user_id, item_id, quantity) VALUES ($1, 'bond_ur', 1) ON CONFLICT (user_id, item_id) DO UPDATE SET quantity = user_items.quantity + 1", user_id)
+                    loot_text = f"**UR Bond** {Emotes.UR_BOND}, 50 Coins, 5000 Gems"
+                else:
+                    item_map = {1: "bond_small", 2: "bond_med", 3: "bond_large"}
+                    item_id = item_map.get(slot_id, "bond_small")
+                    display_name = item_id.replace('_', ' ').title()
+                    loot_text = f"1x {display_name}"
+                    
+                    await pool.execute(f"INSERT INTO user_items (user_id, item_id, quantity) VALUES ($1, $2, 1) ON CONFLICT (user_id, item_id) DO UPDATE SET quantity = user_items.quantity + 1", user_id, item_id)
 
-        # 7. Generate Response
-        result_embed = discord.Embed(
-            title="🏆 VICTORY" if win else "💀 DEFEAT",
-            color=0x2ECC71 if win else 0xE74C3C
-        )
-        result_embed.add_field(name="Your Power", value=f"{total_att:,}", inline=True)
-        result_embed.add_field(name="Enemy Power", value=f"{total_def:,}", inline=True)
-        result_embed.add_field(name="Loot", value=loot_text, inline=False)
+            # 6. Generate Result UI
+            result_embed = discord.Embed(
+                title="🏆 VICTORY" if win else "💀 DEFEAT",
+                color=0x2ECC71 if win else 0xE74C3C
+            )
+            result_embed.add_field(name="Your Power", value=f"{total_att:,}", inline=True)
+            result_embed.add_field(name="Enemy Power", value=f"{total_def:,}", inline=True)
+            result_embed.add_field(name="Loot", value=loot_text, inline=False)
+            
+            if skill_logs and win:
+                result_embed.add_field(name="Battle Log", value="\n".join(set(skill_logs))[:1000], inline=False)
+
+            file = None
+            if win:
+                # Attempt Image Generation
+                try:
+                    img_bytes = await generate_team_image(attacker_team)
+                    file = discord.File(io.BytesIO(img_bytes), filename="victory.png")
+                    result_embed.set_image(url="attachment://victory.png")
+                except Exception as img_err:
+                    print(f"Image Gen Error: {img_err}")
+                    result_embed.set_footer(text="Victory image generation failed.")
+
+            # Send the Result (New Message)
+            await interaction.followup.send(embed=result_embed, file=file)
+
+            # 7. Update Original Dashboard (Lock the Slot)
+            # Fetch fresh state
+            new_embed, new_view = await self.get_dashboard_embed_and_view(user_id)
+            if new_embed:
+                await interaction.edit_original_response(embed=new_embed, view=new_view)
         
-        if skill_logs and win:
-            result_embed.add_field(name="Battle Log", value="\n".join(set(skill_logs))[:1000], inline=False)
-
-        file = None
-        if win:
-            # Draw the user's winning team
-            img_bytes = await generate_team_image(attacker_team)
-            file = discord.File(io.BytesIO(img_bytes), filename="victory.png")
-            result_embed.set_image(url="attachment://victory.png")
-
-        await interaction.followup.send(embed=result_embed, file=file)
+        except Exception as e:
+            traceback.print_exc()
+            await interaction.followup.send(f"❌ An error occurred during the battle: {e}", ephemeral=True)
 
     @commands.command(name="gift")
     async def gift_bond(self, ctx, char_id: int, item_alias: str):
@@ -424,7 +450,6 @@ class Bounty(commands.Cog):
             else:
                 break
         
-        # Save
         async with pool.acquire() as conn:
             await conn.execute("UPDATE user_items SET quantity = quantity - 1 WHERE user_id=$1 AND item_id=$2", str(ctx.author.id), item_id)
             await conn.execute("UPDATE inventory SET bond_level=$1, bond_exp=$2 WHERE id=$3", cur_lvl, cur_exp, char_id)
