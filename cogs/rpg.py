@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands
 import random
 import os
-
+from core.economy import get_item_display_name
 from core.database import get_db_pool
 from core.game_math import calculate_effective_power
 from core.image_gen import generate_team_image

@@ -408,7 +408,12 @@ class Bounty(commands.Cog):
                 else:
                     item_map = {1: "bond_small", 2: "bond_med", 3: "bond_large"}
                     item_id = item_map.get(slot_id, "bond_small")
-                    display_name = item_id.replace('_', ' ').title()
+                    name_map = {
+                        "bond_small": "Faint Tincture",
+                        "bond_med": "Vital Draught",
+                        "bond_large": "Heart Elixirs"
+                    }
+                    display_name = name_map.get(item_id, item_id.replace('_', ' ').title())
                     loot_text = f"1x {display_name}"
                     
                     await pool.execute(f"INSERT INTO user_items (user_id, item_id, quantity) VALUES ($1, $2, 1) ON CONFLICT (user_id, item_id) DO UPDATE SET quantity = user_items.quantity + 1", user_id, item_id)
@@ -504,18 +509,31 @@ class Bounty(commands.Cog):
             "large": ("bond_large", 250), "l": ("bond_large", 250),
             "ur": ("bond_ur", 2500)
         }
+
+        # --- UPDATED MAPPING (Name + Emote) ---
+        item_details = {
+            "bond_small": ("Faint Tincture", Emotes.R_BOND),
+            "bond_med":   ("Vital Draught", Emotes.SR_BOND),
+            "bond_large": ("Heart Elixirs", Emotes.SSR_BOND),
+            "bond_ur":    ("Essence of Devotion", Emotes.UR_BOND)
+        }
         
         selection = aliases.get(item_alias.lower())
         if not selection:
             return await ctx.reply("❌ Invalid item. Options: small, med, large, ur.")
             
         item_id, exp_gain = selection
+        
+        # Retrieve Name and Emote (default to empty string if not found)
+        display_name, emote = item_details.get(item_id, (item_id, ""))
+
         pool = await get_db_pool()
         
         # Check Item
         inv_item = await pool.fetchrow("SELECT quantity FROM user_items WHERE user_id=$1 AND item_id=$2", str(ctx.author.id), item_id)
         if not inv_item or inv_item['quantity'] < 1:
-            return await ctx.reply(f"❌ You do not own any **{item_id}** items.")
+            # Now includes the emote in the error message
+            return await ctx.reply(f"❌ You do not own any **{display_name}** {emote}.")
             
         # Check Character
         char = await pool.fetchrow("SELECT bond_level, bond_exp FROM inventory WHERE id=$1 AND user_id=$2", char_id, str(ctx.author.id))
@@ -540,7 +558,8 @@ class Bounty(commands.Cog):
             await conn.execute("UPDATE user_items SET quantity = quantity - 1 WHERE user_id=$1 AND item_id=$2", str(ctx.author.id), item_id)
             await conn.execute("UPDATE inventory SET bond_level=$1, bond_exp=$2 WHERE id=$3", cur_lvl, cur_exp, char_id)
             
-        msg = f"🎁 Used **{item_alias.upper()}**! (+{exp_gain} Bond EXP)"
+        # Success message with Name + Emote
+        msg = f"🎁 Used **{display_name}** {emote}! (+{exp_gain} Bond EXP)"
         if leveled:
             mult = 1 + (cur_lvl * 0.005)
             msg += f"\n🆙 **BOND LEVEL UP!** Lv. {cur_lvl} (Power x{mult:.3f})"

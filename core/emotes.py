@@ -15,5 +15,6 @@ class Emotes:
     SR_BOND = "<:sr_affinity:1464790481727652018>"
     SSR_BOND = "<:ssr_affinity:1464790554784039124>"
     UR_BOND = "<:ur_affinity:1464790588514894049>" 
+    # MISC 
     KEYS = "<:battle_key:1464945585948725259>"
     

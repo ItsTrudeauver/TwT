@@ -12,6 +12,18 @@ BOAT_COST_PER_PULL = 100_000_000 # 100 Million
 MAX_BOAT_PULLS_DAILY = 10
 UNBELIEVABOAT_TOKEN = os.getenv("UNBELIEVABOAT_TOKEN")
 ECONOMY_GUILD_ID = "1455361761388531746"
+# Add this to the top of the file or with other constants
+
+ITEM_DISPLAY_NAMES = {
+    "bond_small": "Faint Tincture",
+    "bond_med": "Vital Draught",
+    "bond_large": "Heart Elixirs",
+    "bond_ur": "Essence of Devotion"
+}
+
+def get_item_display_name(item_id):
+    """Returns the flair name if it exists, otherwise returns the item_id."""
+    return ITEM_DISPLAY_NAMES.get(item_id, item_id)
 
 class Economy:
     @staticmethod
