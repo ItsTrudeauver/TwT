@@ -79,11 +79,14 @@ class InventoryView(discord.ui.View):
                 rarity_emote = getattr(Emotes, row['rarity'], "")
                 
                 # Dupe & Bond indicators
-                meta_text = ""
-                if row['dupe_level'] > 0: meta_text += f" (+{row['dupe_level']})"
-                if row['bond_level'] > 0: meta_text += f" {Emotes.BOND}{row['bond_level']}"
+                bond_text = ""
                 
-                embed.description += f"`#{row['id']}` {lock} **{row['name']}** \n {meta_text} {rarity_emote} — {Emotes.BP}`{row['true_power']:,}`\n"
+                if row['bond_level'] > 0: bond_text += f" {Emotes.BOND}{row['bond_level']}"
+                
+                dupe_text = ""
+                if row['dupe_level'] > 0: dupe_text += f" (+{row['dupe_level']})" 
+                
+                embed.description += f"`#{row['id']}` {rarity_emote} **{row['name']}** {dupe_text} {lock} \n {bond_text} — {Emotes.BP}`{row['true_power']:,}`\n"
 
         embed.set_footer(text=f"Page {self.page} of {self.max_pages} | Use !view [ID]")
         return embed
