@@ -263,8 +263,8 @@ class Utility(commands.Cog):
                 embed.set_thumbnail(url=char_data['image']['large'])
                 
                 embed.add_field(name="🆔", value=str(anilist_id), inline=True)
-                embed.add_field(name="Rarity", value=f"{emoji}**", inline=True)
-                embed.add_field(name=f"{Emotes.R} Battle Power", value=f"**{power:,}**", inline=True)
+                embed.add_field(name="Rarity", value=f"{emoji}", inline=True)
+                embed.add_field(name=f"Battle Power", value=f"**{power:,}**", inline=True)
                 
                 if skills:
                     embed.add_field(name="✨ Skills", value="\n".join([f"• {s}" for s in skills]), inline=False)
