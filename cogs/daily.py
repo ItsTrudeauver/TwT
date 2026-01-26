@@ -80,7 +80,7 @@ class Daily(commands.Cog):
             await conn.execute("UPDATE daily_tasks SET is_claimed = TRUE WHERE user_id = $1 AND task_key = $2", user_id, task)
             await ctx.reply(f"🎉 **Claimed {reward:,} {Emotes.GEMS}** for {task} task!")
 
-    @commands.command(name="claimall", aliases="claim_all")
+    @commands.command(name="claimall", aliases=["claim_all"])
     async def claim_all(self, ctx):
         """Claim all completed daily task rewards at once"""
         user_id = str(ctx.author.id)
