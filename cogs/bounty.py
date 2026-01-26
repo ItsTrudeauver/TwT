@@ -604,7 +604,7 @@ class Bounty(commands.Cog):
             # Parse Item
             item_input = parts[1].lower()
             if item_input not in aliases:
-                return await ctx.reply(f"❌ Unknown item: `{parts[1]}`. Valid: small, med, large, ur.")
+                return await ctx.reply(f"❌ Unknown item argument: `{parts[1]}`. Valid: small (Faint Tincture), med (Vital Draught), large (Heart Elixirs), ur (Essence of Devotion).")
             
             item_id, exp_val = aliases[item_input]
 
