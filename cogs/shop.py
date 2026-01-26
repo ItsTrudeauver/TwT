@@ -306,8 +306,8 @@ class Shop(commands.Cog):
 
     @commands.command(name="spark", aliases=["pity_exchange"])
     async def spark_exchange(self, ctx):
-        """Exchange 200 Banner Points for a Rate-Up SSR."""
-        SPARK_COST = 200
+        """Exchange 300 Banner Points for a Rate-Up SSR."""
+        SPARK_COST = 300
         pool = await get_db_pool()
         
         current_time = int(datetime.datetime.utcnow().timestamp())
