@@ -7,6 +7,7 @@ from core.database import get_db_pool
 from core.game_math import calculate_effective_power
 # Updated import to include get_skill_info
 from core.skills import SKILL_DATA, get_skill_info
+from core.emotes import Emotes
 
 class SkillPagination(discord.ui.View):
     def __init__(self, pages):
@@ -255,14 +256,15 @@ class Utility(commands.Cog):
                         source_text = "Calculated via Rankings.json"
                     else:
                         return await loading.edit(content="❌ Gacha System Offline.")
-
+                    
+                emoji = getattr(Emotes, rarity, rarity)
                 # 4. Embed Result
                 embed = discord.Embed(title=char_data['name']['full'], url=char_data['siteUrl'], color=0x00BFFF)
                 embed.set_thumbnail(url=char_data['image']['large'])
                 
-                embed.add_field(name="🆔 ID", value=str(anilist_id), inline=True)
-                embed.add_field(name="💎 Rarity", value=f"**{rarity}**", inline=True)
-                embed.add_field(name="⚔️ Battle Power", value=f"**{power:,}**", inline=True)
+                embed.add_field(name="🆔", value=str(anilist_id), inline=True)
+                embed.add_field(name="Rarity", value=f"{emoji}**", inline=True)
+                embed.add_field(name=f"{Emotes.R} Battle Power", value=f"**{power:,}**", inline=True)
                 
                 if skills:
                     embed.add_field(name="✨ Skills", value="\n".join([f"• {s}" for s in skills]), inline=False)
