@@ -29,9 +29,10 @@ class TeamBuilderView(View):
             placeholder="Filter by Rarity",
             options=[
                 discord.SelectOption(label="All Rarities", value="ALL", default=True),
-                discord.SelectOption(label=f"{Emotes.SSR} Only", value="SSR"),
-                discord.SelectOption(label=f"{Emotes.SR} Only", value="SR"),
-                discord.SelectOption(label=f"{Emotes.R} Only", value="R")
+                # Move the emote from 'label' to 'emoji'
+                discord.SelectOption(label="SSR Only", emoji=Emotes.SSR, value="SSR"),
+                discord.SelectOption(label="SR Only", emoji=Emotes.SR, value="SR"),
+                discord.SelectOption(label="R Only", emoji=Emotes.R, value="R")
             ],
             row=0
         )
