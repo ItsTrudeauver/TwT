@@ -556,13 +556,12 @@ class Bounty(commands.Cog):
         """
         Gift bond items to units. Supports bundling.
         Usage: !gift <id> <item> [amount] ! <id> <item> [amount] ...
-        Example: !gift 101 small 5 ! 102 med 1 ! 103 large
+        Example: !gift 101 small 5 ! 102 med 1
         """
         if not args:
             return await ctx.reply(f"Usage: `{ctx.prefix}gift <id> <item> [amount] ! ...`")
 
         # --- CONFIGURATION ---
-        # Format: "alias": ("item_id", exp_value)
         aliases = {
             "small": ("bond_small", 10), "s": ("bond_small", 10),
             "med": ("bond_med", 50), "m": ("bond_med", 50),
@@ -570,7 +569,7 @@ class Bounty(commands.Cog):
             "ur": ("bond_ur", 2500)
         }
         
-        # Support direct ID usage as well
+        # Direct ID support
         aliases.update({
             "bond_small": ("bond_small", 10),
             "bond_med": ("bond_med", 50),
@@ -629,7 +628,12 @@ class Bounty(commands.Cog):
             required_items[req['i_id']] = required_items.get(req['i_id'], 0) + req['amt']
 
         user_id = str(ctx.author.id)
-        pool = get_db_pool()
+        
+        # DB Connection Handling
+        if hasattr(self.bot, 'db') and self.bot.db:
+            pool = self.bot.db
+        else:
+            pool = await get_db_pool()  # <--- FIXED: Added await here
 
         async with pool.acquire() as conn:
             # Check user has enough of ALL items first
