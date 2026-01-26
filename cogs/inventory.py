@@ -83,7 +83,7 @@ class InventoryView(discord.ui.View):
                 if row['dupe_level'] > 0: meta_text += f" (+{row['dupe_level']})"
                 if row['bond_level'] > 0: meta_text += f" {Emotes.BOND}{row['bond_level']}"
                 
-                embed.description += f"`#{row['id']}` {lock} **{row['name']}**{meta_text} {rarity_emote} — ⚔️ `{row['true_power']:,}`\n"
+                embed.description += f"`#{row['id']}` {lock} **{row['name']}** \n {meta_text} {rarity_emote} — {Emotes.BP}`{row['true_power']:,}`\n"
 
         embed.set_footer(text=f"Page {self.page} of {self.max_pages} | Use !view [ID]")
         return embed
