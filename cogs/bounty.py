@@ -551,15 +551,32 @@ class Bounty(commands.Cog):
             except:
                 print(error_report)
 
-    @commands.command(name="gift", aliases=["bond"])
-    async def gift_bond(self, ctx, char_id: int, item_alias: str):
-        """Usage: !gift <id> <small/med/large/ur>"""
+    @commands.command()
+    async def gift(self, ctx, *, args: str = None):
+        """
+        Gift bond items to units. Supports bundling.
+        Usage: !gift <id> <item> [amount] ! <id> <item> [amount] ...
+        Example: !gift 101 small 5 ! 102 med 1 ! 103 large
+        """
+        if not args:
+            return await ctx.reply(f"Usage: `{ctx.prefix}gift <id> <item> [amount] ! ...`")
+
+        # --- CONFIGURATION ---
+        # Format: "alias": ("item_id", exp_value)
         aliases = {
             "small": ("bond_small", 10), "s": ("bond_small", 10),
             "med": ("bond_med", 50), "m": ("bond_med", 50),
             "large": ("bond_large", 250), "l": ("bond_large", 250),
             "ur": ("bond_ur", 2500)
         }
+        
+        # Support direct ID usage as well
+        aliases.update({
+            "bond_small": ("bond_small", 10),
+            "bond_med": ("bond_med", 50),
+            "bond_large": ("bond_large", 250),
+            "bond_ur": ("bond_ur", 2500)
+        })
 
         item_details = {
             "bond_small": ("Faint Tincture", Emotes.R_BOND),
@@ -567,47 +584,127 @@ class Bounty(commands.Cog):
             "bond_large": ("Heart Elixirs", Emotes.SSR_BOND),
             "bond_ur":    ("Essence of Devotion", Emotes.UR_BOND)
         }
-        
-        selection = aliases.get(item_alias.lower())
-        if not selection:
-            return await ctx.reply("❌ Invalid item. Options: small (Faint Tincture), med (Vital Draught), large (Heart Elixirs), ur (Essence of Devotion).")
-            
-        item_id, exp_gain = selection
-        display_name, emote = item_details.get(item_id, (item_id, ""))
 
-        pool = await get_db_pool()
-        
-        inv_item = await pool.fetchrow("SELECT quantity FROM user_items WHERE user_id=$1 AND item_id=$2", str(ctx.author.id), item_id)
-        if not inv_item or inv_item['quantity'] < 1:
-            return await ctx.reply(f"❌ You do not own any **{display_name}** {emote}.")
+        # --- PARSING ---
+        requests = []
+        segments = args.split('!')
+
+        for segment in segments:
+            parts = segment.strip().split()
+            if not parts: continue
             
-        char = await pool.fetchrow("SELECT bond_level, bond_exp FROM inventory WHERE id=$1 AND user_id=$2", char_id, str(ctx.author.id))
-        if not char: return await ctx.reply("❌ Character not found.")
-        if char['bond_level'] >= 50: return await ctx.reply("❌ Character is already at Max Bond (Lv. 50)!")
-        
-        cur_lvl, cur_exp = char['bond_level'], char['bond_exp']
-        cur_exp += exp_gain
-        leveled = False
-        
-        while cur_lvl < 50:
-            req = calculate_bond_exp_required(cur_lvl)
-            if cur_exp >= req:
-                cur_exp -= req
-                cur_lvl += 1
-                leveled = True
-            else:
-                break
-        
+            if len(parts) < 2:
+                return await ctx.reply(f"❌ Invalid format in: `{segment.strip()}`. Expected: `<id> <item> [amount]`")
+
+            # Parse ID
+            try:
+                char_id = int(parts[0])
+            except ValueError:
+                return await ctx.reply(f"❌ Invalid Unit ID: `{parts[0]}`")
+
+            # Parse Item
+            item_input = parts[1].lower()
+            if item_input not in aliases:
+                return await ctx.reply(f"❌ Unknown item: `{parts[1]}`. Valid: small, med, large, ur.")
+            
+            item_id, exp_val = aliases[item_input]
+
+            # Parse Amount
+            amount = 1
+            if len(parts) >= 3:
+                try:
+                    amount = int(parts[2])
+                    if amount < 1: return await ctx.reply("❌ Amount must be at least 1.")
+                except ValueError:
+                    return await ctx.reply(f"❌ Invalid amount: `{parts[2]}`")
+
+            requests.append({'c_id': char_id, 'i_id': item_id, 'exp': exp_val, 'amt': amount})
+
+        if not requests:
+            return await ctx.reply("❌ No valid requests found.")
+
+        # --- INVENTORY CHECK ---
+        required_items = {}
+        for req in requests:
+            required_items[req['i_id']] = required_items.get(req['i_id'], 0) + req['amt']
+
+        user_id = str(ctx.author.id)
+        pool = get_db_pool()
+
         async with pool.acquire() as conn:
-            await conn.execute("UPDATE user_items SET quantity = quantity - 1 WHERE user_id=$1 AND item_id=$2", str(ctx.author.id), item_id)
-            await conn.execute("UPDATE inventory SET bond_level=$1, bond_exp=$2 WHERE id=$3", cur_lvl, cur_exp, char_id)
+            # Check user has enough of ALL items first
+            for i_id, needed in required_items.items():
+                row = await conn.fetchrow("SELECT quantity FROM user_items WHERE user_id=$1 AND item_id=$2", user_id, i_id)
+                owned = row['quantity'] if row else 0
+                
+                if owned < needed:
+                    name, emote = item_details.get(i_id, (i_id, ""))
+                    return await ctx.reply(f"❌ Not enough **{name}** {emote}. Needed: {needed}, Owned: {owned}")
+
+            # --- PROCESS GIFTS ---
+            results_msg = []
             
-        msg = f"🎁 Used **{display_name}** {emote}! (+{exp_gain} Bond EXP)"
-        if leveled:
-            mult = 1 + (cur_lvl * 0.005)
-            msg += f"\n🆙 **BOND LEVEL UP!** Lv. {cur_lvl} (Power x{mult:.3f})"
+            for req in requests:
+                c_id = req['c_id']
+                i_id = req['i_id']
+                amt = req['amt']
+                exp_gain = req['exp'] * amt
+                
+                # Fetch Unit Data
+                unit = await conn.fetchrow("""
+                    SELECT i.id, i.bond_level, i.bond_exp, c.name 
+                    FROM inventory i 
+                    JOIN characters_cache c ON i.anilist_id = c.anilist_id 
+                    WHERE i.id=$1 AND i.user_id=$2
+                """, c_id, user_id)
+                
+                if not unit:
+                    results_msg.append(f"⚠️ Unit `{c_id}` not found.")
+                    continue
+                
+                if unit['bond_level'] >= 50:
+                    results_msg.append(f"⚠️ **{unit['name']}** is already Max Bond (50).")
+                    continue
+
+                # Deduct Items
+                await conn.execute("UPDATE user_items SET quantity = quantity - $1 WHERE user_id=$2 AND item_id=$3", amt, user_id, i_id)
+
+                # Level Up Logic
+                cur_lvl = unit['bond_level']
+                cur_exp = unit['bond_exp'] + exp_gain
+                
+                start_lvl = cur_lvl
+                
+                while cur_lvl < 50:
+                    req_exp = calculate_bond_exp_required(cur_lvl)
+                    if cur_exp >= req_exp:
+                        cur_exp -= req_exp
+                        cur_lvl += 1
+                    else:
+                        break
+                
+                # Cap at 50
+                if cur_lvl >= 50:
+                    cur_lvl = 50
+                    cur_exp = 0
+
+                # Update Unit
+                await conn.execute("UPDATE inventory SET bond_level=$1, bond_exp=$2 WHERE id=$3", cur_lvl, cur_exp, c_id)
+
+                # Result Message
+                if cur_lvl > start_lvl:
+                    results_msg.append(f"✅ **{unit['name']}**: +{exp_gain} XP 🆙 **Lv. {start_lvl} ➜ {cur_lvl}**")
+                else:
+                    req_next = calculate_bond_exp_required(cur_lvl)
+                    results_msg.append(f"✅ **{unit['name']}**: +{exp_gain} XP ({cur_exp}/{req_next})")
+
+        # --- SEND SUMMARY ---
+        final_output = "\n".join(results_msg)
+        if len(final_output) > 2000:
+            final_output = final_output[:1900] + "\n...(truncated)"
+            
+        await ctx.reply(f"🎁 **Gift Results**\n{final_output}")
         
-        await ctx.reply(msg)
 
 async def setup(bot):
     await bot.add_cog(Bounty(bot))

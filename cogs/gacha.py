@@ -233,7 +233,7 @@ class Gacha(commands.Cog):
 
             if banner:
                 spark_points_now = await self.process_spark_points(ctx.author.id, banner['id'], amount)
-                spark_status = f"{Emotes.SPARK} **Spark:** {spark_points_now}/200"
+                spark_status = f"{Emotes.SPARK} **Spark:** {spark_points_now}/300"
             else:
                 spark_status = "⚠️ Standard Pool (No Spark)"
 
