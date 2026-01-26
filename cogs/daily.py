@@ -56,6 +56,8 @@ class Daily(commands.Cog):
         for key, info in NPC_DATA.items():
             status = "✅ Claimed" if completed.get(key) else ("🎁 !claim " + key if progress.get(key) else "⏳ 0/1")
             embed.add_field(name=f"NPC: {key.capitalize()}", value=f"Reward: {info['reward']} {Emotes.GEMS} | {status}", inline=False)
+        
+        embed.set_footer(text="Use !claimall to claim multiple rewards.")
 
         await ctx.reply(embed=embed)
 
