@@ -517,23 +517,14 @@ class Bounty(commands.Cog):
 
             # 6a. Generate Image
             file = None
-            if outcome == "WIN":
-                debug_log.append("STEP 6a: Generating Image")
-                try:
-                    img_team_data = []
-                    for m in attacker_team:
-                        d = m.copy()
-                        if 'power' not in d and 'true_power' in d:
-                            d['power'] = d['true_power']
-                        img_team_data.append(d)
+            filename = "victory.png" if outcome == "WIN" else "defeat.png"
+            asset_path = f"assets/battle results/{filename}"
 
-                    img_bytes = await generate_team_image(img_team_data)
-                    if img_bytes:
-                        file = discord.File(io.BytesIO(img_bytes), filename="victory.png")
-                        result_embed.set_image(url="attachment://victory.png")
-                except Exception as img_err:
-                    print(f"Image Gen Error: {img_err}")
-                    debug_log.append(f"Image Gen Warning: {img_err}")
+            if os.path.exists(asset_path):
+                file = discord.File(asset_path, filename=filename)
+                result_embed.set_image(url=f"attachment://{filename}")
+            else:
+                debug_log.append(f"Warning: Asset missing at {asset_path}")
 
             # Send Result
             debug_log.append("STEP 7: Sending Result")
