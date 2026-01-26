@@ -115,7 +115,7 @@ class Inventory(commands.Cog):
         user_data = await get_user(ctx.author.id)
         await ctx.reply(f"{ctx.author.mention}, you currently have **{user_data['gacha_gems']:,}** {Emotes.GEMS} and **{user_data.get('coins', 0):,}** {Emotes.COINS}")
 
-    @commands.command(name="inventory", aliases=["inv"])
+    @commands.command(name="inventory", aliases=["inv", "chars", "box", "units"])
     async def show_inventory(self, ctx):
         pool = await get_db_pool()
         view = InventoryView(self.bot, ctx.author, pool)
@@ -177,7 +177,7 @@ class Inventory(commands.Cog):
         await pool.execute("UPDATE inventory SET is_locked = FALSE WHERE id = $1 AND user_id = $2", inventory_id, str(ctx.author.id))
         await ctx.reply(f"🔓 Character `#{inventory_id}` unlocked.")
 
-    @commands.command(name="scrap_all", aliases=["mass_scrap"])
+    @commands.command(name="scrap_r", aliases=["scrap_all"])
     async def scrap_all(self, ctx):
         count, gems, coins = await mass_scrap_r_rarity(ctx.author.id)
         if count > 0:
@@ -203,7 +203,7 @@ class Inventory(commands.Cog):
         else:
             await msg.edit(content="❌ Scrap cancelled.", view=None)
 
-    @commands.command(name="items", aliases=["bag"])
+    @commands.command(name="items", aliases=["bag", "item"])
     async def show_items(self, ctx):
         """Displays your Coins and Special Items with correct visual icons."""
         pool = await get_db_pool()
@@ -237,7 +237,7 @@ class Inventory(commands.Cog):
         embed.add_field(name="Consumables", value=item_list, inline=False)
         await ctx.reply(embed=embed)
 
-    @commands.command(name="use_token")
+    @commands.command(name="use_token", aliases=["ut"])
     async def use_ssr_token(self, ctx, char_id: int):
         pool = await get_db_pool()
         token_row = await pool.fetchrow("SELECT quantity FROM user_items WHERE user_id = $1 AND item_id = 'SSR Token'", str(ctx.author.id))

@@ -230,7 +230,7 @@ class Admin(commands.Cog):
                 await conn.execute("UPDATE users SET scrap = scrap + $1 WHERE user_id = $2", total_scrap, user_id)
                 await ctx.reply(f"Scrapped {len(chars)} characters for {total_scrap} scrap.")
 
-    @commands.command(name="override_unit")
+    @commands.command(name="override_unit", aliases=["ou"])
     @commands.is_owner()
     async def override_unit(self, ctx, anilist_id: int, rarity: str, power: int):
         """Manually sets rarity and power for a unit and locks it from being updated by standard logic."""

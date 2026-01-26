@@ -560,7 +560,7 @@ class Bounty(commands.Cog):
             except:
                 print(error_report)
 
-    @commands.command(name="gift")
+    @commands.command(name="gift", aliases=["bond"])
     async def gift_bond(self, ctx, char_id: int, item_alias: str):
         """Usage: !gift <id> <small/med/large/ur>"""
         aliases = {

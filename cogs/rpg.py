@@ -64,7 +64,7 @@ class RPG(commands.Cog):
 
             return total_power, team_list
 
-    @commands.command(name="set_team_battle", aliases=['stb'])
+    @commands.command(name="set_team_battle", aliases=['stb', 'sbt', 'st'])
     async def set_team(self, ctx, s1: int, s2: int = None, s3: int = None, s4: int = None, s5: int = None):
         slots = [s1, s2, s3, s4, s5]
         clean_slots = [s for s in slots if s is not None]
