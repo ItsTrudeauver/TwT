@@ -32,7 +32,7 @@ class ShopDropdown(discord.ui.Select):
         for idx, item in enumerate(shop_items):
             options.append(discord.SelectOption(
                 label=f"{item['name']} ({item['rarity']})",
-                description=f"Base Cost: {item['base_price']:,} {Emotes.GEMS}",
+                description=f"Base Cost: {item['base_price']:,}",
                 value=str(idx),
                 emoji=f"{Emotes.GEMS}"
             ))
