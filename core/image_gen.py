@@ -34,15 +34,14 @@ THEMES = {
 }
 
 
-async def fetch_image(url):
-    async with aiohttp.ClientSession() as session:
-        try:
-            async with session.get(url) as resp:
-                if resp.status == 200:
-                    data = await resp.read()
-                    return Image.open(io.BytesIO(data)).convert("RGBA")
-        except:
-            pass
+async def fetch_image(session, url):
+    try:
+        async with session.get(url) as resp:
+            if resp.status == 200:
+                data = await resp.read()
+                return Image.open(io.BytesIO(data)).convert("RGBA")
+    except:
+        pass
     return None
 
 
@@ -232,8 +231,10 @@ async def generate_10_pull_image(character_list):
     except:
         base_img = Image.new("RGBA", (canvas_w, canvas_h), "#121212")
 
-    tasks = [fetch_image(char['image_url']) for char in character_list]
-    downloaded_images = await asyncio.gather(*tasks)
+    async with aiohttp.ClientSession() as session:
+        tasks = [fetch_image(session, char['image_url']) for char in character_list]
+        downloaded_images = await asyncio.gather(*tasks)
+    
     for i, img in enumerate(downloaded_images):
         character_list[i]['image_obj'] = img
 
@@ -272,17 +273,18 @@ async def generate_team_image(team_list):
     tx_w = bbox[2] - bbox[0]
     draw.text(((canvas_w - tx_w) / 2, 25), header_text, font=font_large, fill="#FFD700")
 
-    tasks = []
-    indices = []
-    for i, char in enumerate(team_list):
-        if char:
-            tasks.append(fetch_image(char['image_url']))
-            indices.append(i)
-    
-    if tasks:
-        downloaded = await asyncio.gather(*tasks)
-        for i, img in zip(indices, downloaded):
-            team_list[i]['image_obj'] = img
+    async with aiohttp.ClientSession() as session:
+        tasks = []
+        indices = []
+        for i, char in enumerate(team_list):
+            if char:
+                tasks.append(fetch_image(session, char['image_url']))
+                indices.append(i)
+        
+        if tasks:
+            downloaded = await asyncio.gather(*tasks)
+            for i, img in zip(indices, downloaded):
+                team_list[i]['image_obj'] = img
 
     start_x, start_y, gap_x = 70, 100, 15
 
@@ -372,28 +374,29 @@ async def generate_battle_image(team1, team2, name1, name2, winner_idx=None):
     canvas = Image.new("RGBA", (W, H), (15, 15, 15, 255))
     draw = ImageDraw.Draw(canvas)
     
-    async def prep_team_cards(team_list, is_right_side=False):
-        tasks = []
-        for char in team_list:
-            if char.get('image_url'):
-                tasks.append(fetch_image(char['image_url']))
-            else:
-                tasks.append(asyncio.sleep(0, result=None))
-        
-        images = await asyncio.gather(*tasks)
-        cards = []
-        for i, img in enumerate(images):
-            team_list[i]['image_obj'] = img
-            card = create_character_card(team_list[i])
-            if is_right_side:
-                card = ImageOps.mirror(card)
-            cards.append(card)
-        return cards
+    async with aiohttp.ClientSession() as session:
+        async def prep_team_cards(team_list, is_right_side=False):
+            tasks = []
+            for char in team_list:
+                if char.get('image_url'):
+                    tasks.append(fetch_image(session, char['image_url']))
+                else:
+                    tasks.append(asyncio.sleep(0, result=None))
+            
+            images = await asyncio.gather(*tasks)
+            cards = []
+            for i, img in enumerate(images):
+                team_list[i]['image_obj'] = img
+                card = create_character_card(team_list[i])
+                if is_right_side:
+                    card = ImageOps.mirror(card)
+                cards.append(card)
+            return cards
 
-    cards1, cards2 = await asyncio.gather(
-        prep_team_cards(team1, is_right_side=False),
-        prep_team_cards(team2, is_right_side=True)
-    )
+        cards1, cards2 = await asyncio.gather(
+            prep_team_cards(team1, is_right_side=False),
+            prep_team_cards(team2, is_right_side=True)
+        )
 
     card_w, card_h, gap = 200, 300, 20
     start_x = (W - (5 * card_w + 4 * gap)) // 2
