@@ -112,8 +112,75 @@ class InventoryView(discord.ui.View):
 class Inventory(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        
+        
+    @commands.command(name="profile", aliases=["p", "user"])
+    async def user_profile(self, ctx, member: discord.Member = None):
+        """Displays user stats: Gems, Coins, Level, Achievements, and Soulmates."""
+        member = member or ctx.author
+        user_id_str = str(member.id)
+        pool = await get_db_pool()
 
-    @commands.command(name="gems", aliases=["pc", "wallet", "profile"])
+        # 1. Fetch User Stats & Achievement Count
+        user_data = await pool.fetchrow("""
+            SELECT 
+                u.gacha_gems, 
+                u.coins, 
+                u.team_level,
+                u.team_xp,
+                (SELECT COUNT(*) FROM achievements WHERE user_id = $1) as ach_count
+            FROM users u
+            WHERE u.user_id = $1
+        """, user_id_str)
+
+        if not user_data:
+            return await ctx.reply("❌ User has no profile yet.")
+
+        # 2. Fetch Soulmates (Bond Level 50)
+        soulmate_rows = await pool.fetch("""
+            SELECT c.name 
+            FROM inventory i
+            JOIN characters_cache c ON i.anilist_id = c.anilist_id
+            WHERE i.user_id = $1 AND i.bond_level >= 50
+        """, user_id_str)
+        
+        soulmates = [r['name'] for r in soulmate_rows]
+        soulmate_text = ", ".join(soulmates) if soulmates else "*None yet*"
+
+        # 3. Create the Profile Embed
+        embed = discord.Embed(
+            title=f"👤 {member.display_name}'s Profile", 
+            color=0x3498DB
+        )
+        if member.avatar:
+            embed.set_thumbnail(url=member.avatar.url)
+
+        # Basic Stats
+        stats_val = (
+            f"{Emotes.GEMS} **Gems:** `{user_data['gacha_gems']:,}`\n"
+            f"{Emotes.COINS} **Coins:** `{user_data['coins']:,}`\n"
+            f"📈 **Team Level:** `{user_data['team_level']}` (XP: `{user_data['team_xp']}`)"
+        )
+        embed.add_field(name="RESOURCES", value=stats_val, inline=False)
+
+        # Achievements
+        embed.add_field(
+            name="🏆 ACHIEVEMENTS", 
+            value=f"Total Earned: `{user_data['ach_count']}`", 
+            inline=True
+        )
+
+        # Soulmates
+        embed.add_field(
+            name=f"💖 SOULMATES ({len(soulmates)})", 
+            value=soulmate_text, 
+            inline=False
+        )
+
+        embed.set_footer(text=f"ID: {user_id_str}")
+        await ctx.reply(embed=embed)
+
+    @commands.command(name="gems", aliases=["pc", "wallet", "cur"])
     async def check_balance(self, ctx):
         user_data = await get_user(ctx.author.id)
         await ctx.reply(f"{ctx.author.mention}, you currently have **{user_data['gacha_gems']:,}** {Emotes.GEMS} and **{user_data.get('coins', 0):,}** {Emotes.COINS}")
