@@ -19,4 +19,4 @@ class Emotes:
     KEYS = "<:battle_key:1465122549196259512>"
     BOND = "<:bond:1465116201066827846>"
     BP = "<:BP:1465161481644539996>"
-    
+    ACHIEVEMENTS = "<:achievements:1465776027635814631>"

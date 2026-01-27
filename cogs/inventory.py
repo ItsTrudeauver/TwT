@@ -165,7 +165,7 @@ class Inventory(commands.Cog):
 
         # Achievements
         embed.add_field(
-            name="🏆 ACHIEVEMENTS", 
+            name=f"{Emotes.ACHIEVEMENTS} ACHIEVEMENTS", 
             value=f"Total Earned: `{user_data['ach_count']}`", 
             inline=True
         )
