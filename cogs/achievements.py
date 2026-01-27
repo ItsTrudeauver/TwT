@@ -22,7 +22,7 @@ class AchievementCog(commands.Cog):
         # 1. Create the Badge Row (Mudae Style)
         badge_row = ""
         for aid, ach in ACHIEVEMENTS.items():
-            badge_row += f"{ach.badge_emote} " if aid in earned_ids else "🔳 "
+            badge_row += f"{ach.badge_emote} " if aid in earned_ids else f"{Emotes.UNACHIEVED} "
         
         embed = discord.Embed(
             title=f"{Emotes.ACHIEVEMENTS} {target.display_name}'s Hall of Fame",
@@ -34,9 +34,9 @@ class AchievementCog(commands.Cog):
         details = ""
         for aid, ach in ACHIEVEMENTS.items():
             if aid in earned_ids:
-                details += f"✅ **{ach.name}**: {ach.description}\n"
+                details += f"✅**{ach.name}**: {ach.description}\n"
             else:
-                details += f"🔒 *{ach.name}* (Locked)\n"
+                details += f"🔒*{ach.name}* (Locked)\n"
         
         embed.add_field(name="Details", value=details or "No achievements defined.", inline=False)
         embed.set_thumbnail(url=target.display_avatar.url)
@@ -53,7 +53,7 @@ class AchievementCog(commands.Cog):
         for ach in new_unlocks:
             # Stylish unlock notification
             embed = discord.Embed(
-                title="🏆 Achievement Unlocked!",
+                title=f"{Emotes.ACHIEVEMENTS} Achievement Unlocked!",
                 description=f"Congratulations {ctx.author.mention}!\nYou earned the **{ach.name}** badge.",
                 color=0x00ff00
             )

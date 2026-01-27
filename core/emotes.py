@@ -22,5 +22,7 @@ class Emotes:
     ACHIEVEMENTS = "<:achievements:1465776027635814631>"
     
     # ACHIEVEMENTS
+    UNACHIEVED = "<:unachieved:1465803568937173103>"
     FIRST_CONTRACT = "<:first_contract:1465789178775343207>"
     CENTURION = "<:centurion:1465792167191646360>"
+    ULTIMATE_BATTLER = "<:ultimate_battler:1465802009813717158>"

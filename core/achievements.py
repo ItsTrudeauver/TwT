@@ -17,6 +17,16 @@ class Achievement:
 
 # --- REGISTRY ---
 ACHIEVEMENTS: Dict[str, Achievement] = {
+    
+    "ULTIMATE_BATTLER": Achievement(
+        id="ULTIMATE_BATTLER",
+        name="Ultimate Battler",
+        description="Defeat TwT in a team battle.",
+        badge_emote=Emotes.ULTIMATE_BATTLER, # Replace with Emotes.GODSLAYER if defined in core/emotes.py
+        gem_reward=50000,
+        coin_reward=1000,
+        check_sql="SELECT EXISTS(SELECT 1 FROM boss_kills WHERE user_id = $1 AND boss_id = '1463071276036788392')"
+    ),
     "FIRST_PULL": Achievement(
         id="FIRST_PULL",
         name="First Contact",

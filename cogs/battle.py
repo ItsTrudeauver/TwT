@@ -171,6 +171,16 @@ class Battle(commands.Cog):
         initial_win = final_team_totals["attacker"] > final_team_totals["defender"]
         outcome = "WIN" if initial_win else "LOSS"
         
+        # Locate the section where the battle outcome is determined (around line 185)
+# After determining the outcome == "WIN"
+
+        if outcome == "WIN" and isinstance(target, discord.Member) and target.id == 1463071276036788392:
+            await pool.execute("""
+                INSERT INTO boss_kills (user_id, boss_id) 
+                VALUES ($1, $2) 
+                ON CONFLICT DO NOTHING
+            """, attacker_id, str(target.id))
+            
         # Check Snake Trap
         if not initial_win and battle_ctx.flags.get("snake_trap"):
             outcome = "DRAW"

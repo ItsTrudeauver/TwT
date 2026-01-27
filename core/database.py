@@ -20,6 +20,16 @@ async def get_db_pool():
 async def init_db():
     pool = await get_db_pool()
     async with pool.acquire() as conn:
+
+# Add this inside the init_db() function
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS boss_kills (
+                user_id TEXT,
+                boss_id TEXT,
+                PRIMARY KEY (user_id, boss_id)
+            );
+        """)     
+        # ACHIEVEMENTS: Tracks earned achievements
         
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS achievements (
