@@ -34,12 +34,16 @@ class ShopDropdown(discord.ui.Select):
                 label=f"{item['name']} ({item['rarity']})",
                 description=f"Base Cost: {item['base_price']:,} {Emotes.GEMS}",
                 value=str(idx),
-                emoji="🪙"
+                emoji=f"{Emotes.GEMS}"
             ))
         
         super().__init__(placeholder="Select a character to buy...", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
+        # 1. Defer immediately to prevent "Interaction Failed"
+        # We set ephemeral=True so the receipt is private (prevents chat spam)
+        await interaction.response.defer(ephemeral=True)
+
         item_index = int(self.values[0])
         target_item = self.view.shop_items[item_index]
         user_id = str(interaction.user.id)
@@ -47,8 +51,9 @@ class ShopDropdown(discord.ui.Select):
         pool = await get_db_pool()
         user_row = await pool.fetchrow("SELECT gacha_gems, team_level FROM users WHERE user_id = $1", user_id)
         
+        # 2. Use 'followup.send' instead of 'response.send_message'
         if not user_row:
-            return await interaction.response.send_message("❌ You are not registered! Type `!start` first.", ephemeral=True)
+            return await interaction.followup.send("❌ You are not registered! Type `!start` first.")
             
         gems = user_row['gacha_gems']
         level = user_row['team_level'] if user_row['team_level'] else 1
@@ -58,7 +63,7 @@ class ShopDropdown(discord.ui.Select):
         
         if gems < final_price:
             missing = final_price - gems
-            return await interaction.response.send_message(f"❌ You cannot afford this!\nCost: **{final_price:,}** (Short: {missing:,})", ephemeral=True)
+            return await interaction.followup.send(f"❌ You cannot afford this!\nCost: **{final_price:,}** (Short: {missing:,})")
             
         async with pool.acquire() as conn:
             existing = await conn.fetchrow(
@@ -83,7 +88,8 @@ class ShopDropdown(discord.ui.Select):
             if discount_active:
                 msg += f"\n📉 **Level 30 Discount Applied:** Saved {target_item['base_price'] - final_price:,} {Emotes.GEMS}!"
 
-            await interaction.response.send_message(msg, ephemeral=False)
+            # Use followup.send here as well
+            await interaction.followup.send(msg)
 
 # --- VIEW: ITEM SHOP ---
 class ItemShopView(discord.ui.View):
@@ -243,7 +249,7 @@ class Shop(commands.Cog):
                 price_display = f"~~{price:,}~~ **{discounted:,}**"
 
             rate_up = "🔥" if item.get('rate_up') else ""
-            list_str += f"**{item['name']}** `[{item['rarity']}]` {rate_up} — {Emotes.GEMS} {price_display}\n"
+            list_str += f"**{item['name']}** `[{item['rarity']}]` {rate_up} — {price_display}\n"
 
         embed.add_field(name="Today's Selection", value=list_str if list_str else "None", inline=False)
         embed.set_footer(text="Use the dropdown menu below to purchase.")
