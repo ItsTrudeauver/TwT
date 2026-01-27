@@ -34,7 +34,7 @@ class AchievementCog(commands.Cog):
         details = ""
         for aid, ach in ACHIEVEMENTS.items():
             if aid in earned_ids:
-                details += f"✅**{ach.name}**: {ach.description}\n"
+                details += f"✅**{ach.name}**\n"
             else:
                 details += f"🔒*{ach.name}* (Locked)\n"
         
