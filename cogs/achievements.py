@@ -22,7 +22,7 @@ class AchievementCog(commands.Cog):
         # 1. Create the Badge Row (Mudae Style)
         badge_row = ""
         for aid, ach in ACHIEVEMENTS.items():
-            badge_row += f"{ach.badge_emote} " if aid in earned_ids else f"{Emotes.UNACHIEVED} "
+            badge_row += f"{ach.badge_emote}" if aid in earned_ids else f"{Emotes.UNACHIEVED}"
         
         embed = discord.Embed(
             title=f"{Emotes.ACHIEVEMENTS} {target.display_name}'s Hall of Fame",
