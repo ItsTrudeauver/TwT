@@ -1,469 +1,361 @@
-from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageEnhance
+import discord
+from discord.ext import commands
 import aiohttp
-import io
+import random
 import os
-import pathlib
 import asyncio
-import hashlib
-from datetime import datetime
+import json
+import time
 
-# --- ROBUST PATH SETUP ---
-current_dir = pathlib.Path(__file__).parent.absolute()
-project_root = current_dir.parent
+# Internal imports (Ensure these match your folder structure)
+from core.database import get_user, batch_add_to_inventory, batch_cache_characters, get_db_pool
+from core.game_math import calculate_effective_power
+from core.image_gen import generate_10_pull_image, generate_banner_image
+from core.economy import Economy, GEMS_PER_PULL
+from core.emotes import Emotes
 
-FONT_PATH = project_root / "assets" / "fonts" / "bold_font.ttf"
-BG_PATH = project_root / "assets" / "templates" / "gacha_bg.jpg"
-CACHE_DIR = project_root / "cache"
+class Gacha(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+        self.anilist_url = os.getenv("ANILIST_URL", "https://graphql.anilist.co")
+        self.rank_map = {}
+        self.load_rankings()
 
-# Create cache directory if it doesn't exist
-CACHE_DIR.mkdir(exist_ok=True)
+    def load_rankings(self):
+        try:
+            with open("data/rankings.json", "r") as f:
+                self.rank_map = json.load(f)
+            print(f"✅ [Gacha] Loaded {len(self.rank_map)} characters from rankings.json")
+        except FileNotFoundError:
+            print("⚠️ [Gacha] 'data/rankings.json' not found. Please run scripts/update_ranks.py")
 
-# Star Colors
-STAR_YELLOW = (255, 215, 0)
-STAR_RED = (255, 69, 0)
+    def get_cached_rank(self, anilist_id):
+        return self.rank_map.get(str(anilist_id), 10001)
 
-# Rarity Theme Colors
-THEMES = {
-    "SSR": {
-        "hex": "#FFD700",
-        "rgb": (255, 215, 0)
-    },
-    "SR": {
-        "hex": "#DA70D6",
-        "rgb": (218, 112, 214)
-    },
-    "R": {
-        "hex": "#00BFFF",
-        "rgb": (0, 191, 255)
-    }
-}
+    def determine_rarity(self, rank):
+        if rank <= 250: return "SSR"
+        if rank <= 1500: return "SR"
+        return "R"
 
+    def get_rarity_and_page(self, guaranteed_ssr=False):
+        if guaranteed_ssr: return "SSR", random.randint(1, 250)
+        
+        roll = random.random() * 100
+        if roll < 2:  return "SSR", random.randint(1, 250)
+        if roll < 13: return "SR", random.randint(251, 1500)
+        return "R", random.randint(1501, 10000)
 
-async def fetch_image(url):
-    """
-    Fetches an image from a URL, caching it locally to speed up future requests.
-    """
-    if not url:
+    async def get_active_banner(self):
+        pool = await get_db_pool()
+        current_time = int(time.time())
+        banner = await pool.fetchrow("SELECT * FROM banners WHERE is_active = TRUE AND end_timestamp > $1 LIMIT 1", current_time)
+        
+        if not banner:
+            # Auto-close expired banners
+            await pool.execute("UPDATE banners SET is_active = FALSE WHERE is_active = TRUE AND end_timestamp <= $1", current_time)
+            return None
+            
+        return banner
+
+    async def process_spark_points(self, user_id, banner_id, amount):
+        """Adds spark points and resets if the banner has changed."""
+        pool = await get_db_pool()
+        async with pool.acquire() as conn:
+            user = await conn.fetchrow("SELECT banner_points, last_banner_id FROM users WHERE user_id = $1", str(user_id))
+            
+            current_points = user['banner_points'] if user and user['banner_points'] is not None else 0
+            last_id = user['last_banner_id'] if user and user['last_banner_id'] is not None else -1
+            
+            if last_id != banner_id:
+                current_points = 0
+            
+            new_points = current_points + amount
+            
+            await conn.execute("""
+                UPDATE users 
+                SET banner_points = $1, last_banner_id = $2 
+                WHERE user_id = $3
+            """, new_points, banner_id, str(user_id))
+            
+            return new_points
+
+    async def fetch_banner_pull(self, session, banner):
+        """Logic for pulling from a specific banner (handling rate-ups)."""
+        rarity, page = self.get_rarity_and_page()
+        
+        # Check Rate-up Chance
+        if rarity in ["SSR", "SR"] and random.random() < banner['rate_up_chance']:
+            pool = await get_db_pool()
+            possible_hits = await pool.fetch("""
+                SELECT anilist_id FROM characters_cache 
+                WHERE anilist_id = ANY($1) AND rarity = $2
+            """, banner['rate_up_ids'], rarity)
+            
+            if possible_hits:
+                target_id = random.choice(possible_hits)['anilist_id']
+                return await self.fetch_character_by_id(session, target_id)
+
+        # Fallback to standard pool
+        return await self.fetch_character_by_rank(session, rarity, page)
+
+    async def fetch_character_by_id(self, session, anilist_id: int, forced_rarity=None):
+        """Fetches character data from AniList by ID."""
+        query = """
+        query ($id: Int) {
+            Character(id: $id) {
+                id
+                name { full }
+                image { large }
+                favourites
+            }
+        }
+        """
+        try:
+            async with session.post(self.anilist_url, json={'query': query, 'variables': {'id': anilist_id}}) as resp:
+                if resp.status != 200: return None
+                data = await resp.json()
+                if not data.get('data') or not data['data'].get('Character'): return None
+
+                char_data = data['data']['Character']
+                
+                if forced_rarity:
+                    rarity = forced_rarity
+                    rank = 1 if rarity == "SSR" else 500
+                else:
+                    rank = self.get_cached_rank(anilist_id)
+                    rarity = self.determine_rarity(rank)
+                
+                pool = await get_db_pool()
+                override = await pool.fetchrow("SELECT rarity, true_power, is_overridden FROM characters_cache WHERE anilist_id = $1", char_data['id'])
+                
+                if override and override['is_overridden']:
+                    rarity = override['rarity']
+                    true_p = override['true_power']
+                else:
+                    true_p = calculate_effective_power(char_data['favourites'], rarity, rank)
+                
+                return {
+                    'id': char_data['id'],
+                    'name': char_data['name']['full'],
+                    'image_url': char_data['image']['large'],
+                    'favs': char_data['favourites'],
+                    'rarity': rarity,
+                    'page': rank,
+                    'true_power': true_p
+                }
+        except Exception as e:
+            print(f"❌ Error fetching ID {anilist_id}: {e}")
+            return None
+
+    async def fetch_character_by_rank(self, session, rarity, page):
+        """Fetches a character from AniList by rank/page."""
+        query = """
+        query ($page: Int) {
+            Page(page: $page, perPage: 1) {
+                characters(sort: FAVOURITES_DESC) {
+                    id
+                    name { full }
+                    image { large }
+                    favourites
+                }
+            }
+        }
+        """
+        try:
+            async with session.post(self.anilist_url, json={'query': query, 'variables': {'page': page}}) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    chars = data.get('data', {}).get('Page', {}).get('characters', [])
+                    if chars:
+                        char = chars[0]
+                        pool = await get_db_pool()
+                        override = await pool.fetchrow("SELECT rarity, true_power, is_overridden FROM characters_cache WHERE anilist_id = $1", char['id'])
+                        
+                        if override and override['is_overridden']:
+                            rarity = override['rarity']
+                            true_p = override['true_power']
+                        else:
+                            true_p = calculate_effective_power(char['favourites'], rarity, page)
+                        
+                        return {
+                            'id': char['id'],
+                            'name': char['name']['full'],
+                            'image_url': char['image']['large'],
+                            'favs': char['favourites'],
+                            'rarity': rarity,
+                            'page': page,
+                            'true_power': true_p
+                        }
+        except: pass
         return None
 
-    # 1. Generate a unique filename based on the URL hash
-    hash_name = hashlib.md5(url.encode()).hexdigest() + ".png"
-    file_path = CACHE_DIR / hash_name
+    @commands.command(name="banner")
+    async def current_banner(self, ctx):
+        """Displays the currently active gacha banner."""
+        banner = await self.get_active_banner()
+        if not banner:
+            return await ctx.reply("🎫 No banner is currently active.")
 
-    # 2. Check if we already have it on disk (Instant Load)
-    if file_path.exists():
+        loading = await ctx.reply("🔍 *Retrieving banner details...*")
         try:
-            return Image.open(file_path).convert("RGBA")
+            async with aiohttp.ClientSession() as session:
+                tasks = [self.fetch_character_by_id(session, cid) for cid in banner['rate_up_ids']]
+                character_list = [c for c in await asyncio.gather(*tasks) if c]
+
+            if not character_list:
+                return await loading.edit(content="❌ Could not fetch character data from the API.")
+
+            img_output = await generate_banner_image(character_list, banner['name'], banner['end_timestamp'])
+            
+            await loading.delete()
+            await ctx.reply(file=discord.File(fp=img_output, filename="banner.png"))
         except Exception as e:
-            print(f"⚠️ Corrupt cache file {file_path}, redownloading... {e}")
-
-    # 3. If not, download it
-    async with aiohttp.ClientSession() as session:
-        try:
-            async with session.get(url) as resp:
-                if resp.status == 200:
-                    data = await resp.read()
-                    img = Image.open(io.BytesIO(data)).convert("RGBA")
-                    
-                    # 4. Save to cache for next time
-                    try:
-                        img.save(file_path, "PNG")
-                    except Exception as e:
-                        print(f"⚠️ Failed to write to cache: {e}")
-                        
-                    return img
-        except Exception as e:
-            print(f"❌ Failed to fetch image {url}: {e}")
-            pass
-            
-    return None
-
-
-def get_fitted_font(draw, text, max_width, font_path, max_font_size=40):
-    size = max_font_size
-    while size > 10:
-        try:
-            font = ImageFont.truetype(str(font_path), size)
-        except OSError:
-            print(f"❌ CRITICAL: Font file not found at {font_path}")
-            return ImageFont.load_default()
-
-        bbox = draw.textbbox((0, 0), text, font=font)
-        text_width = bbox[2] - bbox[0]
-
-        if text_width <= max_width:
-            return font
-
-        size -= 2
-
-    return ImageFont.truetype(str(font_path), 10)
-
-
-def apply_holo_effect(img, rarity):
-    if rarity == "R": return img
-    
-    if rarity == "SR":
-        img = ImageEnhance.Color(img).enhance(1.2)
-        overlay = Image.new("RGBA", img.size, THEMES["SR"]["rgb"] + (40,))
-        return Image.alpha_composite(img.convert("RGBA"), overlay)
-
-    if rarity == "SSR":
-        img = ImageEnhance.Color(img).enhance(1.6)
-        img = ImageEnhance.Contrast(img).enhance(1.15)
-        img = img.convert("RGBA")
-
-        rainbow = Image.new("RGBA", img.size)
-        draw = ImageDraw.Draw(rainbow)
+            await loading.delete()
+            await ctx.reply(f"⚠️ Error displaying banner: `{e}`")
         
-        for i in range(img.width + img.height):
-            hue = int((i / (img.width + img.height)) * 255)
-            if hue < 85: r, g, b = 255, hue * 3, 0
-            elif hue < 170: r, g, b = 255 - (hue - 85) * 3, 255, 0
-            else: r, g, b = 0, 255, (hue - 170) * 3
-            
-            draw.line([(i, 0), (0, i)], fill=(r, g, b, 45), width=2)
-            
-        return Image.alpha_composite(img, rainbow)
-    
-    return img
-
-
-def draw_dupe_stars(draw, dupe_level, card_width):
-    """
-    Draws stars based on the 'Lap' logic:
-    - 1-5 dupes: 1-5 yellow stars.
-    - 6-10 dupes: 5 stars total, where (dupe - 5) are Red and the rest are Yellow.
-    """
-    if not dupe_level or dupe_level <= 0:
-        return
-
-    # Determine counts based on 'Lap' logic (max 5 slots)
-    if dupe_level <= 5:
-        red_count = 0
-        yellow_count = dupe_level
-    else:
-        # Lap 2: Red stars (capped at 5)
-        red_count = min(5, dupe_level - 5)
-        # Remaining slots are yellow (to make a total of 5 stars)
-        yellow_count = 5 - red_count
-
-    total_stars = red_count + yellow_count
-    star_size = 12
-    gap = 2
-    
-    # Center stars horizontally
-    total_width = (total_stars * star_size) + ((total_stars - 1) * gap)
-    current_x = (card_width - total_width) / 2
-    # Positioned just above the name box (which starts at y=250)
-    y_pos = 235 
-
-    def draw_star_shape(x, y, color):
-        # A simple 5-point star polygon
-        points = [
-            (x + 6, y), (x + 8, y + 4), (x + 12, y + 4), 
-            (x + 9, y + 7), (x + 10, y + 11), (x + 6, y + 9), 
-            (x + 2, y + 11), (x + 3, y + 7), (x, y + 4), (x + 4, y + 4)
-        ]
-        draw.polygon(points, fill=color, outline="black")
-
-    # Draw Red Stars first (representing the second lap)
-    for _ in range(red_count):
-        draw_star_shape(current_x, y_pos, STAR_RED)
-        current_x += star_size + gap
-    
-    # Draw Yellow Stars
-    for _ in range(yellow_count):
-        draw_star_shape(current_x, y_pos, STAR_YELLOW)
-        current_x += star_size + gap
-
-
-def create_character_card(char_data, card_size=(200, 300)):
-    card = Image.new("RGBA", card_size, (20, 20, 20, 255))
-    draw = ImageDraw.Draw(card)
-    rarity = char_data['rarity']
-    theme = THEMES.get(rarity, THEMES["R"])
-
-    # Image
-    img = char_data.get('image_obj')
-    if img:
-        img = ImageOps.fit(img, (card_size[0], card_size[1] - 50),
-                           method=Image.Resampling.LANCZOS)
-        img = apply_holo_effect(img, char_data['rarity'])
-        card.paste(img, (0, 0))
-
-    # --- DUPE STARS ---
-    # Drawn after pasting the image to ensure they sit on top and aren't affected by holo sheen
-    dupe_level = char_data.get('dupe_level', 0)
-    draw_dupe_stars(draw, dupe_level, card_size[0])
-
-    # Text Box
-    draw.rectangle([0, 250, 200, 300], fill="#151515")
-    
-    if rarity == "SSR":
-        for x in range(200):
-            hue = int((x / 200) * 255)
-            if hue < 85: color = (255, hue * 3, 0)
-            elif hue < 170: color = (255 - (hue - 85) * 3, 255, 0)
-            else: color = (0, 255, (hue - 170) * 3)
-            draw.line([(x, 250), (x, 254)], fill=color)
-    else:
-        draw.rectangle([0, 250, 200, 254], fill=theme["hex"])
-
-    # Name Scaling
-    name = char_data['name']
-    font_name = get_fitted_font(draw, name, 190, FONT_PATH, max_font_size=36)
-
-    bbox = draw.textbbox((0, 0), name, font=font_name)
-    text_width = bbox[2] - bbox[0]
-    text_height = bbox[3] - bbox[1]
-
-    x_pos = (200 - text_width) / 2
-    y_pos = 250 + (50 - text_height) / 2 - 4
-    draw.text((x_pos, y_pos), name, font=font_name, fill="white")
-
-    # Rarity Tag
-    try:
-        font_bold = ImageFont.truetype(str(FONT_PATH), 24)
-    except:
-        font_bold = ImageFont.load_default()
-
-    rarity_text = char_data['rarity']
-    text_x, text_y = 8, 5
-    draw.text((text_x + 2, text_y + 2), rarity_text, font=font_bold, fill="black")
-    draw.text((text_x, text_y), rarity_text, font=font_bold, fill=theme["hex"])
-    draw.text((text_x, text_y), rarity_text, font=font_bold, fill=theme["hex"], stroke_width=1, stroke_fill="white")
-
-    # Border
-    border_width = 5 if rarity != "R" else 2
-    if rarity == "SSR":
-        for i in range(200):
-            hue = int((i / 200) * 255)
-            if hue < 85: color = (255, hue * 3, 0)
-            elif hue < 170: color = (255 - (hue - 85) * 3, 255, 0)
-            else: color = (0, 255, (hue - 170) * 3)
-            draw.line([(i, 0), (i, border_width)], fill=color)
-            draw.line([(i, 299), (i, 299 - border_width)], fill=color)
+    @commands.command(name="pull", aliases=["summon"])
+    async def pull_character(self, ctx, amount: int = 1):
+        """Pulls 1 or 10 characters from the gacha."""
+        if amount not in [1, 10]: return await ctx.reply("❌ Only 1 or 10 pulls allowed.")
         
-        for j in range(300):
-            hue = int((j / 300) * 255)
-            if hue < 85: color = (255, hue * 3, 0)
-            elif hue < 170: color = (255 - (hue - 85) * 3, 255, 0)
-            else: color = (0, 255, (hue - 170) * 3)
-            draw.line([(0, j), (border_width, j)], fill=color)
-            draw.line([(199, j), (199 - border_width, j)], fill=color)
-    else:
-        border_color = theme["hex"] if rarity != "R" else "#333333"
-        draw.rectangle([0, 0, 199, 299], outline=border_color, width=border_width)
+        # 1. Calculate Cost
+        cost = amount * GEMS_PER_PULL
+        
+        # 2. ATOMIC DEDUCTION (Solves Negative Balance / Spam)
+        pool = await get_db_pool()
+        async with pool.acquire() as conn:
+            # This query will return None if they don't have enough gems, effectively blocking the pull
+            deduction = await conn.fetchrow("""
+                UPDATE users 
+                SET gacha_gems = gacha_gems - $1 
+                WHERE user_id = $2 AND gacha_gems >= $1 
+                RETURNING gacha_gems
+            """, cost, str(ctx.author.id))
 
-    return card
+        if not deduction:
+            # Fetch actual balance only to display the error message
+            user_data = await get_user(ctx.author.id) 
+            return await ctx.reply(f"❌ Need **{cost:,} {Emotes.GEMS}**. Balance: **{user_data['gacha_gems']:,}**")
 
-
-async def generate_10_pull_image(character_list):
-    canvas_w, canvas_h = 1100, 700
-    try:
-        base_img = Image.open(str(BG_PATH)).convert("RGBA").resize((canvas_w, canvas_h))
-    except:
-        base_img = Image.new("RGBA", (canvas_w, canvas_h), "#121212")
-
-    # Uses cached fetch_image now
-    tasks = [fetch_image(char['image_url']) for char in character_list]
-    downloaded_images = await asyncio.gather(*tasks)
-    
-    for i, img in enumerate(downloaded_images):
-        character_list[i]['image_obj'] = img
-
-    start_x, start_y = 40, 40
-    gap_x, gap_y = 10, 20
-
-    for i, char in enumerate(character_list):
-        card = create_character_card(char)
-        row = i // 5
-        col = i % 5
-        x = start_x + (col * (200 + gap_x))
-        y = start_y + (row * (300 + gap_y))
-        base_img.paste(card, (x, y), card)
-
-    output = io.BytesIO()
-    base_img.save(output, format="PNG")
-    output.seek(0)
-    return output
-
-
-async def generate_team_image(team_list):
-    canvas_w, canvas_h = 1200, 550
-    base_img = Image.new("RGBA", (canvas_w, canvas_h), (10, 10, 10, 255))
-    draw = ImageDraw.Draw(base_img)
-
-    try:
-        font_large = ImageFont.truetype(str(FONT_PATH), 45)
-        font_medium = ImageFont.truetype(str(FONT_PATH), 26)
-        font_small = ImageFont.truetype(str(FONT_PATH), 18)
-    except:
-        font_large = font_medium = font_small = ImageFont.load_default()
-
-    total_power = sum(char['power'] for char in team_list if char)
-    header_text = f"SQUAD TOTAL POWER: {total_power:,}"
-    bbox = draw.textbbox((0, 0), header_text, font=font_large)
-    tx_w = bbox[2] - bbox[0]
-    draw.text(((canvas_w - tx_w) / 2, 25), header_text, font=font_large, fill="#FFD700")
-
-    tasks = []
-    indices = []
-    for i, char in enumerate(team_list):
-        if char:
-            tasks.append(fetch_image(char['image_url']))
-            indices.append(i)
-    
-    if tasks:
-        downloaded = await asyncio.gather(*tasks)
-        for i, img in zip(indices, downloaded):
-            team_list[i]['image_obj'] = img
-
-    start_x, start_y, gap_x = 70, 100, 15
-
-    for i, char in enumerate(team_list):
-        x, y = start_x + (i * (200 + gap_x)), start_y
-
-        if char:
-            card = create_character_card(char)
-            base_img.paste(card, (x, y), card)
+        loading = await ctx.reply(f"🎰 *Pulling {amount}x...*")
+        
+        # 3. SAFETY BLOCK (Solves API Errors & Refunds)
+        try:
+            banner = await self.get_active_banner()
             
-            p_text = f"⚔️ {char['power']:,}"
-            p_bbox = draw.textbbox((0, 0), p_text, font=font_medium)
-            px_w = p_bbox[2] - p_bbox[0]
-            draw.text((x + (200 - px_w) / 2, y + 310), p_text, font=font_medium, fill="white")
-            
-            import json
-            skills = char.get('ability_tags', [])
-            if isinstance(skills, str):
-                try:
-                    skills = json.loads(skills)
-                except:
-                    skills = [skills] if skills.strip() else []
-            
-            active_skills = [str(s).capitalize() for s in skills if s and str(s).strip()]
-            s_text = ", ".join(active_skills) if active_skills else "No Skills"
-            s_color = "#AAAAAA" if not active_skills else "#00FF7F"
-            s_bbox = draw.textbbox((0, 0), s_text, font=font_small)
-            sx_w = s_bbox[2] - s_bbox[0]
-            draw.text((x + (200 - sx_w) / 2, y + 345), s_text, font=font_small, fill=s_color)
-            
-        else:
-            empty_slot = Image.new("RGBA", (200, 300), (30, 30, 30, 255))
-            e_draw = ImageDraw.Draw(empty_slot)
-            e_draw.rectangle([0, 0, 199, 299], outline="#444444", width=2)
-            text = f"SLOT {i + 1}"
-            bbox = e_draw.textbbox((0, 0), text, font=font_medium)
-            tx_w, tx_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
-            e_draw.text(((200 - tx_w) / 2, (300 - tx_h) / 2), text, font=font_medium, fill="#666666")
-            base_img.paste(empty_slot, (x, y), empty_slot)
+            # --- PROCESS SPARK ---
+            spark_points_now = 0
+            spark_status = ""
 
-    output = io.BytesIO()
-    base_img.save(output, format="PNG")
-    output.seek(0)
-    return output
-
-
-async def generate_banner_image(character_data_list, banner_name, end_timestamp):
-    banner_w, banner_h = 800, 450
-    canvas = Image.new('RGB', (banner_w, banner_h), (20, 20, 20))
-    strip_w = banner_w // len(character_data_list)
-
-    # UPDATED: Use parallel, cached fetching
-    tasks = [fetch_image(char['image_url']) for char in character_data_list]
-    images = await asyncio.gather(*tasks)
-
-    for i, char_img in enumerate(images):
-        if char_img:
-            # Resize and crop logic
-            aspect = char_img.width / char_img.height
-            target_h = banner_h
-            target_w = int(target_h * aspect)
-            char_img = char_img.resize((target_w, target_h), Image.LANCZOS)
-            
-            left = (char_img.width - strip_w) // 2
-            char_img = char_img.crop((left, 0, left + strip_w, banner_h))
-            canvas.paste(char_img, (i * strip_w, 0), char_img)
-
-    draw = ImageDraw.Draw(canvas)
-    try:
-        font_bold = ImageFont.truetype(str(FONT_PATH), 45)
-        font_small = ImageFont.truetype(str(FONT_PATH), 25)
-    except:
-        font_bold = font_small = ImageFont.load_default()
-    
-    overlay_h = 100
-    draw.rectangle([0, banner_h - overlay_h, banner_w, banner_h], fill=(0, 0, 0, 180))
-    draw.text((20, banner_h - 90), f"RATE UP: {banner_name.upper()}", font=font_bold, fill=(255, 215, 0))
-    
-    expiry_str = datetime.fromtimestamp(end_timestamp).strftime("%b %d, %Y - %H:%M")
-    draw.text((22, banner_h - 35), f"ENDS: {expiry_str} UTC", font=font_small, fill=(200, 200, 200))
-
-    out = io.BytesIO()
-    canvas.save(out, format="PNG")
-    out.seek(0)
-    return out
-
-
-async def generate_battle_image(team1, team2, name1, name2, winner_idx=None):
-    W, H = 1200, 850
-    canvas = Image.new("RGBA", (W, H), (15, 15, 15, 255))
-    draw = ImageDraw.Draw(canvas)
-    
-    async def prep_team_cards(team_list, is_right_side=False):
-        # Uses cached fetch_image now
-        tasks = []
-        for char in team_list:
-            if char.get('image_url'):
-                tasks.append(fetch_image(char['image_url']))
+            if banner:
+                spark_points_now = await self.process_spark_points(ctx.author.id, banner['id'], amount)
+                spark_status = f"{Emotes.SPARK} **Spark:** {spark_points_now}/300"
             else:
-                tasks.append(asyncio.sleep(0, result=None))
-        
-        images = await asyncio.gather(*tasks)
-        cards = []
-        for i, img in enumerate(images):
-            team_list[i]['image_obj'] = img
-            card = create_character_card(team_list[i])
-            if is_right_side:
-                card = ImageOps.mirror(card)
-            cards.append(card)
-        return cards
+                spark_status = "⚠️ Standard Pool (No Spark)"
 
-    cards1, cards2 = await asyncio.gather(
-        prep_team_cards(team1, is_right_side=False),
-        prep_team_cards(team2, is_right_side=True)
-    )
+            # --- API FETCHING (Parallelized for Speed) ---
+            async with aiohttp.ClientSession() as session:
+                tasks = []
+                for _ in range(amount):
+                    if banner: 
+                        tasks.append(self.fetch_banner_pull(session, banner))
+                    else:
+                        r, p = self.get_rarity_and_page()
+                        tasks.append(self.fetch_character_by_rank(session, r, p))
+                
+                # Run all fetches at once
+                pulled_chars = [c for c in await asyncio.gather(*tasks) if c]
 
-    card_w, card_h, gap = 200, 300, 20
-    start_x = (W - (5 * card_w + 4 * gap)) // 2
-    
-    for i, card in enumerate(cards1):
-        x, y = start_x + (i * (card_w + gap)), 100
-        if winner_idx == 2: card = ImageOps.grayscale(card)
-        canvas.paste(card, (x, y), card)
+            # If the list is empty, the API likely failed completely
+            if not pulled_chars: 
+                raise Exception("API returned no characters (Rate Limit or Downtime).")
 
-    for i, card in enumerate(cards2):
-        x, y = start_x + (i * (card_w + gap)), 500
-        if winner_idx == 1: card = ImageOps.grayscale(card)
-        canvas.paste(card, (x, y), card)
+            # Save to database
+            await batch_cache_characters(pulled_chars)
+            scrapped_gems, scrapped_coins = await batch_add_to_inventory(ctx.author.id, pulled_chars)
+            
+            # --- SINGLE PULL RESPONSE ---
+            if amount == 1:
+                c = pulled_chars[0]
+                row = await pool.fetchrow("SELECT dupe_level FROM inventory WHERE user_id = $1 AND anilist_id = $2", str(ctx.author.id), c['id'])
+                dupe_lv = row['dupe_level'] if row else 0
+                boosted_power = int(c['true_power'] * (1 + (dupe_lv * 0.05)))
+                
+                desc = f"**{c['rarity']}** | Power: **{boosted_power:,}** (Lv.{dupe_lv})"
+                
+                if scrapped_gems > 0 or scrapped_coins > 0:
+                    rewards = []
+                    if scrapped_gems > 0: rewards.append(f"**{scrapped_gems:,} {Emotes.GEMS}**")
+                    if scrapped_coins > 0: rewards.append(f"**{scrapped_coins:,} {Emotes.COINS}**")
+                    desc += f"\n♻️ **Max Dupes!** Scrapped for {' and '.join(rewards)}"
+                
+                title_text = f"{spark_status} | {c['name']}" if spark_status else f"✨ {c['name']}"
 
-    try:
-        font_vs = ImageFont.truetype(str(FONT_PATH), 120)
-        font_name = ImageFont.truetype(str(FONT_PATH), 45)
-    except:
-        font_vs = font_name = ImageFont.load_default()
+                embed = discord.Embed(title=title_text, description=desc, color=0xFFD700)
+                embed.set_image(url=c['image_url'])
+                
+                await loading.delete()
+                await ctx.reply(embed=embed)
+            
+            # --- 10-PULL RESPONSE ---
+            else:
+                # Generate the composite image
+                img = await generate_10_pull_image(pulled_chars)
+                await loading.delete()
+                
+                embed = discord.Embed(color=0x2ECC71)
+                embed.title = f"{spark_status}"
+                embed.set_image(url="attachment://10pull.png")
+                
+                if scrapped_gems > 0 or scrapped_coins > 0:
+                    rewards = []
+                    if scrapped_gems > 0: rewards.append(f"**{scrapped_gems:,} {Emotes.GEMS}**")
+                    if scrapped_coins > 0: rewards.append(f"**{scrapped_coins:,} {Emotes.COINS}**")
+                    embed.description = f"♻️ **Auto-scrapped extras for {' and '.join(rewards)}!**"
+                
+                file = discord.File(fp=img, filename="10pull.png")
+                await ctx.reply(file=file, embed=embed)
 
-    vs_text = "V S"
-    v_bbox = draw.textbbox((0, 0), vs_text, font=font_vs)
-    v_w = v_bbox[2] - v_bbox[0]
-    draw.text(((W - v_w) // 2, 400), vs_text, font=font_vs, fill="#FF4500", stroke_width=2, stroke_fill="white")
-    draw.text((start_x, 40), f"PLAYER: {name1.upper()}", font=font_name, fill="cyan")
-    
-    bbox2 = draw.textbbox((0, 0), f"OPPONENT: {name2.upper()}", font=font_name)
-    n2_w = bbox2[2] - bbox2[0]
-    draw.text((W - start_x - n2_w, 440), f"OPPONENT: {name2.upper()}", font=font_name, fill="orange")
+        except Exception as e:
+            # 4. AUTO-REFUND ON FAILURE
+            # If anything in the 'try' block fails, we give the money back.
+            await pool.execute("UPDATE users SET gacha_gems = gacha_gems + $1 WHERE user_id = $2", cost, str(ctx.author.id))
+            print(f"⚠️ Refunded {cost} gems to {ctx.author.id} due to error: {e}")
+            
+            try: await loading.delete()
+            except: pass
+            
+            await ctx.reply(f"⚠️ **Error:** `{e}`\n💎 **Your gems have been automatically refunded.**")
 
-    out = io.BytesIO()
-    canvas.save(out, format="PNG")
-    out.seek(0)
-    return out
+    @commands.command(name="starter")
+    async def starter_pull(self, ctx):
+        """Claims the one-time starter pack (10 characters, 1 guaranteed SSR)."""
+        user_data = await get_user(ctx.author.id)
+        if user_data.get('has_claimed_starter'): return await ctx.reply("❌ Already claimed!")
+
+        loading = await ctx.reply("🎁 *Opening Starter Pack...*")
+        try:
+            async with aiohttp.ClientSession() as session:
+                tasks = [self.fetch_character_by_rank(session, *self.get_rarity_and_page(guaranteed_ssr=True))]
+                for _ in range(9):
+                    tasks.append(self.fetch_character_by_rank(session, *self.get_rarity_and_page()))
+                
+                chars = [c for c in await asyncio.gather(*tasks) if c]
+
+            if len(chars) < 10: return await loading.edit(content="❌ Sync Error. Please try again.")
+
+            await batch_cache_characters(chars)
+            await batch_add_to_inventory(ctx.author.id, chars)
+            
+            pool = await get_db_pool()
+            await pool.execute("UPDATE users SET has_claimed_starter = TRUE WHERE user_id = $1", str(ctx.author.id))
+            
+            img = await generate_10_pull_image(chars)
+            await loading.delete()
+            await ctx.reply(content="🎉 **Starter Pack Opened!**", file=discord.File(fp=img, filename="starter.png"))
+        except Exception as e:
+            await ctx.reply(f"⚠️ Error: `{e}`")
+
+# --- MANDATORY SETUP FUNCTION ---
+async def setup(bot):
+    await bot.add_cog(Gacha(bot))
