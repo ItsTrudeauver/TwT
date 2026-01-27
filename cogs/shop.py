@@ -34,7 +34,7 @@ class ShopDropdown(discord.ui.Select):
                 label=f"{item['name']} ({item['rarity']})",
                 description=f"Base Cost: {item['base_price']:,}",
                 value=str(idx),
-                emoji=f"{Emotes.GEMS}"
+                emoji={Emotes.GEMS}
             ))
         
         super().__init__(placeholder="Select a character to buy...", min_values=1, max_values=1, options=options)
