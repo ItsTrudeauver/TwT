@@ -460,20 +460,20 @@ class Bounty(commands.Cog):
                 ON CONFLICT (user_id, slot_id) DO UPDATE SET status = $3
             """, user_id, slot_id, final_status)
             if outcome == "WIN":
-            # 1. Track Tier Takedown (for R_TAKEDOWN, etc.)
-            # Assumes 'tier' variable is available from the bounty fetch earlier in the function
-            # If 'tier' is not defined, retrieve it from bounty_row['tier']
-                boss_id_tag = f"BOUNTY_{bounty_row['tier']}" 
-            
+                # 1. Update Boss Kills for Achievements (R_TAKEDOWN, etc.)
+                # We use 'user_id' (string) defined at the top of the function
+                tier = bounty_row['tier']
+                boss_id = f"BOUNTY_{tier}"
+                
                 await pool.execute("""
                     INSERT INTO boss_kills (user_id, boss_id)
                     VALUES ($1, $2)
                     ON CONFLICT (user_id, boss_id) DO NOTHING
-                """, str(ctx.author.id), boss_id_tag)
+                """, user_id, boss_id)
 
-            # 2. Track Total Bounties (for VETERAN_HUNTER)
-            # This appears to be missing from the battle logic
-            await Tracker.increment_bounty_wins(ctx.author.id)
+                # 2. Increment Total Bounty Wins (for VETERAN_HUNTER)
+                # Use 'interaction.user.id' instead of 'ctx.author.id'
+                await Tracker.increment_bounty_wins(interaction.user.id)
             # 4. Rewards
             debug_log.append("STEP 4: Rewards")
             loot_text = "None"
