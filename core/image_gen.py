@@ -309,7 +309,7 @@ async def generate_team_image(team_list):
                     skills = [skills] if skills.strip() else []
             
             active_skills = [str(s).capitalize() for s in skills if s and str(s).strip()]
-            s_text = ", ".join(active_skills) if active_skills else "No Skills"
+            s_text = "\n".join(active_skills) if active_skills else "No Skills"
             s_color = "#AAAAAA" if not active_skills else "#00FF7F"
             s_bbox = draw.textbbox((0, 0), s_text, font=font_small)
             sx_w = s_bbox[2] - s_bbox[0]
