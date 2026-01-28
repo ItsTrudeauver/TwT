@@ -120,13 +120,6 @@ class Battle(commands.Cog):
         load_skills(attacker_team, "attacker")
         load_skills(defender_team, "defender")
         
-        def skill_priority(s):
-            # Lower number = Earlier execution
-            if s.name in ["The Onyx Moon"]: 
-                return 0 
-            return 10
-
-        all_skills.sort(key=skill_priority)
 
         # --- 2. PHASE: START OF BATTLE ---
         # (Zodiacs, Disables, Kamikaze, Team Debuffs)

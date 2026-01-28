@@ -234,7 +234,7 @@ class OnyxMoonSkill(BattleSkill):
     async def on_battle_start(self, ctx: BattleContext):
         # Note: Onyx Moon usually ignores suppression because it fires at Start of Battle (same priority as Pig)
         # But if you want it suppressible by a faster Pig, uncomment the check.
-        if ctx.is_suppressed(self.side, self.name): return
+        # if ctx.is_suppressed(self.side, self.name): return
 
         enemy_team = ctx.get_team(self.enemy_side)
         # Find valid targets (enemies with skills, excluding Zodiacs usually)
