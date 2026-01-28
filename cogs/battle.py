@@ -131,9 +131,6 @@ class Battle(commands.Cog):
         # --- 2. PHASE: START OF BATTLE ---
         # (Zodiacs, Disables, Kamikaze, Team Debuffs)
         for skill in all_skills:
-            print(f"DEBUG: Executing {skill.name} for {skill.side} slot {skill.idx}")
-            await skill.on_battle_start(battle_ctx)
-            print(f"DEBUG: Finished {skill.name}")
             await skill.on_battle_start(battle_ctx)
 
         # --- 3. PHASE: CALCULATION ---
