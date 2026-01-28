@@ -225,7 +225,7 @@ class RPG(commands.Cog):
                         else:
                             # Truncate name to keep it clean
                             name = name_map.get(uid, "Unknown")
-                            if len(name) > 10: name = name[:9] + "…"
+                            if len(name) > 32: name = name[:31] + "…"
                             slots_display.append(f"`{name}`")
 
                     embed.add_field(
