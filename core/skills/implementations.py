@@ -281,14 +281,32 @@ class KamikazeSkill(BattleSkill):
 
 class GuardSkill(BattleSkill):
     async def on_battle_start(self, ctx: BattleContext):
-        if ctx.is_suppressed(self.side, self.name): return
+        # 1. Check if skill is suppressed (e.g. by Onyx Moon)
+        if ctx.is_suppressed(self.side, self.name): 
+            return
 
-        # Deduct 10% total power from opponent team.
-        # We achieve this by applying a 0.9 multiplier to all existing enemies.
+        # 2. Check Stackability using Context Flags
+        # We use a unique flag key for this skill on this specific side.
+        flag_key = f"guard_active_{self.side}"
+        
+        if ctx.flags.get(flag_key):
+            # Already active for this team. Do nothing (and no log).
+            return
+        
+        # 3. Mark as active so subsequent instances (dupes) don't trigger
+        ctx.flags[flag_key] = True
+
+        # 4. Apply Effect: Reduce enemy team power by 10%
+        # self.val is 0.10
+        debuff_mult = 1.0 - self.val
         enemy_team = ctx.get_team(self.enemy_side)
+        
+        # Apply to all valid enemy slots
         for i in range(len(enemy_team)):
-            ctx.multipliers[self.enemy_side][i] *= (1.0 - self.val)
-        ctx.add_log(self.side, self.idx, f"🛡️ **Guard** reduced enemy team power by {int(self.val*100)}%!")
+            ctx.multipliers[self.enemy_side][i] *= debuff_mult
+
+        # 5. Add Log (Only once)
+        ctx.add_log(self.side, self.idx, f"🛡️ **{self.owner['name']}** activated **Guard** (-{int(self.val * 100)}% to Enemy Team)!")
 
 class EphemeralitySkill(BattleSkill):
     async def on_battle_start(self, ctx: BattleContext):
