@@ -232,21 +232,25 @@ class EntwinedSoulsSkill(BattleSkill):
 
 class OnyxMoonSkill(BattleSkill):
     async def on_battle_start(self, ctx: BattleContext):
-        # Note: Onyx Moon usually ignores suppression because it fires at Start of Battle (same priority as Pig)
-        # But if you want it suppressible by a faster Pig, uncomment the check.
-        # if ctx.is_suppressed(self.side, self.name): return
+        # Note: Onyx Moon usually ignores suppression (Priority 0), 
+        # but if you add faster silencers later, keep this check.
+        if ctx.is_suppressed(self.side, self.name): return
 
         enemy_team = ctx.get_team(self.enemy_side)
-        # Find valid targets (enemies with skills, excluding Zodiacs usually)
         valid_targets = []
-        for i, char in enumerate(enemy_team):
-            if not char: continue
-            tags = char.get('ability_tags', [])
-            if isinstance(tags, str): tags = json.loads(tags)
+
+        # DISABLER PROTECTION:
+        # Prevent disabling: "Queen of the Zodiacs" (Immune), "The Onyx Moon" (Self/Other), and potentially others.
+        immune_skills = ["Queen of the Zodiacs", "The Onyx Moon"]
+
+        for i, enemy in enumerate(enemy_team):
+            if enemy["hp"] <= 0: continue
+            
+            # Check enemy tags
+            tags = enemy.get("ability_tags", [])
             for tag in tags:
-                if tag != "Queen of the Zodiacs": 
+                if tag not in immune_skills:
                     valid_targets.append((i, tag))
-        
         if not valid_targets:
             ctx.add_log(self.side, self.idx, f"🌑 **{self.owner['name']}** cast **The Onyx Moon**, but no skills to silence.")
             return
