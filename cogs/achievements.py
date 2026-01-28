@@ -24,6 +24,9 @@ class AchievementPaginationView(View):
         
         # Calculate the index where text pages start
         self.text_start_index = len(self.badge_pages)
+        
+        # Initialize button state
+        self._update_buttons()
 
     def _generate_badge_pages(self):
         """Chunks badges into fields/pages safely."""
@@ -51,12 +54,11 @@ class AchievementPaginationView(View):
             fields.append(current_field)
             
         # 3. Chunk fields into Pages (Max 2 fields of badges per page for aesthetics)
-        # You can increase FIELDS_PER_PAGE if you want denser pages
         FIELDS_PER_PAGE = 2
         for i in range(0, len(fields), FIELDS_PER_PAGE):
             pages.append(fields[i : i + FIELDS_PER_PAGE])
             
-        return pages if pages else [["None"]] # Handle empty case
+        return pages if pages else [["None"]]
 
     def _generate_text_pages(self):
         """Chunks text details into pages of 10."""
@@ -65,6 +67,20 @@ class AchievementPaginationView(View):
         for i in range(0, len(self.all_data), ITEMS_PER_PAGE):
             pages.append(self.all_data[i : i + ITEMS_PER_PAGE])
         return pages if pages else [[]]
+
+    def _update_buttons(self):
+        """Updates the Jump button label/style based on current view."""
+        is_text_mode = self.current_page >= self.text_start_index
+        
+        for child in self.children:
+            if isinstance(child, Button) and child.custom_id == "jump_btn":
+                if is_text_mode:
+                    child.label = "Badges"
+                    child.style = discord.ButtonStyle.secondary
+                else:
+                    child.label = "List"
+                    child.style = discord.ButtonStyle.primary
+                break
 
     async def get_page_embed(self):
         embed = discord.Embed(
@@ -88,7 +104,6 @@ class AchievementPaginationView(View):
 
         # CASE B: Text Page
         else:
-            # Calculate local index for text pages
             local_idx = self.current_page - self.text_start_index
             items = self.text_pages[local_idx]
             
@@ -103,7 +118,6 @@ class AchievementPaginationView(View):
             embed.description = description
             footer_txt = f"View: Details (Page {self.current_page + 1}/{self.total_pages})"
 
-        # Common Footer
         unlock_stats = f"Unlocked: {len(self.earned_ids)}/{len(self.all_data)}"
         embed.set_footer(text=f"{footer_txt} • {unlock_stats}")
         
@@ -117,18 +131,24 @@ class AchievementPaginationView(View):
         
         if self.current_page > 0:
             self.current_page -= 1
+            self._update_buttons()
             await interaction.response.edit_message(embed=await self.get_page_embed(), view=self)
 
-    @discord.ui.button(label="📜 List", style=discord.ButtonStyle.primary)
+    # Note: custom_id="jump_btn" is crucial for _update_buttons to find it
+    @discord.ui.button(label="📜 List", style=discord.ButtonStyle.primary, custom_id="jump_btn")
     async def jump_button(self, interaction: discord.Interaction, button: Button):
         if interaction.user.id != self.ctx.author.id: return
         
-        # Jump straight to the first text page
-        if self.current_page != self.text_start_index:
+        # Toggle Logic
+        if self.current_page < self.text_start_index:
+            # Currently on Badges -> Jump to Text
             self.current_page = self.text_start_index
-            await interaction.response.edit_message(embed=await self.get_page_embed(), view=self)
         else:
-            await interaction.response.defer() # Already there
+            # Currently on Text -> Jump to Badges
+            self.current_page = 0
+            
+        self._update_buttons()
+        await interaction.response.edit_message(embed=await self.get_page_embed(), view=self)
 
     @discord.ui.button(label="▶️", style=discord.ButtonStyle.secondary)
     async def next_button(self, interaction: discord.Interaction, button: Button):
@@ -136,6 +156,7 @@ class AchievementPaginationView(View):
 
         if self.current_page < self.total_pages - 1:
             self.current_page += 1
+            self._update_buttons()
             await interaction.response.edit_message(embed=await self.get_page_embed(), view=self)
 
 class AchievementCog(commands.Cog):
@@ -163,7 +184,6 @@ class AchievementCog(commands.Cog):
         if ctx.author.bot: return
 
         try:
-            # We process ALL achievements for the user
             new_unlocks = await AchievementEngine.process_all(ctx.author.id)
             
             for ach in new_unlocks:
@@ -183,7 +203,6 @@ class AchievementCog(commands.Cog):
                 
                 await ctx.channel.send(embed=embed)
         except Exception as e:
-            # Silent fail or log to console to avoid spamming users if DB is busy
             print(f"Achievement Check Error: {e}")
 
 async def setup(bot):
