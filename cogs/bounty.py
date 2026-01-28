@@ -13,6 +13,7 @@ from core.game_math import calculate_bond_exp_required
 from core.emotes import Emotes
 from core.skills import create_skill_instance, BattleContext
 from core.image_gen import generate_team_image
+from core.tracker import Tracker
 
 # --- CONFIGURATION ---
 BANNER_URL = "https://media.discordapp.net/attachments/995879199959162882/1465111664583115009/twtbountyboard.png"
@@ -701,6 +702,8 @@ class Bounty(commands.Cog):
                 else:
                     req_next = calculate_bond_exp_required(cur_lvl)
                     results_msg.append(f"✅ **{unit['name']}**: +{exp_gain} XP ({cur_exp}/{req_next})")
+                
+        await Tracker.increment_bounty_wins(user_id)
 
         # --- SEND SUMMARY ---
         final_output = "\n".join(results_msg)

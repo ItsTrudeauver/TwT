@@ -13,6 +13,7 @@ from core.game_math import calculate_effective_power
 from core.image_gen import generate_10_pull_image, generate_banner_image
 from core.economy import Economy, GEMS_PER_PULL
 from core.emotes import Emotes
+from core.tracker import Tracker
 
 class Gacha(commands.Cog):
     def __init__(self, bot):
@@ -273,6 +274,7 @@ class Gacha(commands.Cog):
             # Save to database
             await batch_cache_characters(pulled_chars)
             scrapped_gems, scrapped_coins = await batch_add_to_inventory(ctx.author.id, pulled_chars)
+            await Tracker.increment_pulls(ctx.author.id, amount)
             
             # --- SINGLE PULL RESPONSE ---
             if amount == 1:
@@ -346,6 +348,8 @@ class Gacha(commands.Cog):
 
             await batch_cache_characters(chars)
             await batch_add_to_inventory(ctx.author.id, chars)
+            await Tracker.increment_pulls(ctx.author.id, 10)
+            
             
             pool = await get_db_pool()
             await pool.execute("UPDATE users SET has_claimed_starter = TRUE WHERE user_id = $1", str(ctx.author.id))

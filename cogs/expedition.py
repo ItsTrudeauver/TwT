@@ -6,6 +6,7 @@ from core.database import get_db_pool, get_user
 from core.economy import Economy, GEMS_PER_PULL
 from core.skills import get_skill_info
 from core.emotes import Emotes
+from core.tracker import Tracker
 
 class Expedition(commands.Cog):
     def __init__(self, bot):
@@ -190,6 +191,8 @@ class Expedition(commands.Cog):
                     team_xp = $3
                 WHERE user_id = $4
             """, final_gems, cur_lvl, cur_xp, user_id)
+            
+            await Tracker.track_expedition_gain(user_id, final_gems)
             
             await pool.execute("""
                 UPDATE expeditions SET start_time = NULL, last_claim = $1 WHERE user_id = $2

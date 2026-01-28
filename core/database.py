@@ -75,7 +75,11 @@ async def init_db():
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_boat_pull_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;")
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS boat_credits_spent BIGINT DEFAULT 0;")
         # --- BOUNTY BOARD & BOND SYSTEM ---
-        
+        await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS total_pulls INTEGER DEFAULT 0;")
+        await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS total_bounties INTEGER DEFAULT 0;")
+        await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS expedition_gems_total INTEGER DEFAULT 0;")
+        await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS total_scrapped INTEGER DEFAULT 0;")
+        await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS checkin_streak INTEGER DEFAULT 0;")
         # 1. Update Inventory for Bonds
         await conn.execute("ALTER TABLE inventory ADD COLUMN IF NOT EXISTS bond_exp INTEGER DEFAULT 0;")
         await conn.execute("ALTER TABLE inventory ADD COLUMN IF NOT EXISTS bond_level INTEGER DEFAULT 1;")
@@ -370,6 +374,7 @@ async def mass_scrap_r_rarity(user_id):
                     "UPDATE users SET gacha_gems = gacha_gems + $1, coins = coins + $2 WHERE user_id = $3", 
                     gems, coins, str(user_id)
                 )
+                await conn.execute("UPDATE users SET total_scrapped = total_scrapped + $1 WHERE user_id = $2", count, str(user_id))
                 return count, gems, coins
             return 0, 0, 0
 
@@ -401,5 +406,6 @@ async def mass_scrap_sr_rarity(user_id):
                     "UPDATE users SET gacha_gems = gacha_gems + $1, coins = coins + $2 WHERE user_id = $3", 
                     gems, coins, str(user_id)
                 )
+                await conn.execute("UPDATE users SET total_scrapped = total_scrapped + $1 WHERE user_id = $2", count, str(user_id))
                 return count, gems, coins
             return 0, 0, 0

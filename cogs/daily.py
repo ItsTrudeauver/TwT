@@ -3,6 +3,7 @@ from discord.ext import commands
 import datetime
 from core.database import get_db_pool, add_currency
 from core.emotes import Emotes
+from core.tracker import Tracker
 
 NPC_DATA = {
     "easy":      {"reward": 500,  "desc": "Defeat an Easy NPC Team (5 R)"},
@@ -28,6 +29,20 @@ class Daily(commands.Cog):
             user = await conn.fetchrow("SELECT last_daily_exchange FROM users WHERE user_id = $1", user_id)
             if user['last_daily_exchange'] and user['last_daily_exchange'].date() >= now:
                 return await ctx.reply("❌ Already checked in today! Reset at 00:00 UTC.")
+            
+            streak = user['checkin_streak'] or 0
+            last_date = user['last_daily_exchange']
+            
+            if last_date:
+                delta = (now - last_date.date()).days
+                if delta == 1:
+                    streak += 1
+                elif delta > 1:
+                    streak = 1
+            else:
+                streak = 1 
+
+            await Tracker.update_streak(user_id, streak)
 
             await add_currency(user_id, 1500)
             await conn.execute("UPDATE users SET last_daily_exchange = CURRENT_TIMESTAMP WHERE user_id = $1", user_id)
