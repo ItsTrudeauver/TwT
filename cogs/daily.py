@@ -26,7 +26,7 @@ class Daily(commands.Cog):
         now = datetime.datetime.utcnow().date()
 
         async with pool.acquire() as conn:
-            user = await conn.fetchrow("SELECT last_daily_exchange FROM users WHERE user_id = $1", user_id)
+            user = await conn.fetchrow("SELECT last_daily_exchange, checkin_streak FROM users WHERE user_id = $1", user_id)
             if user['last_daily_exchange'] and user['last_daily_exchange'].date() >= now:
                 return await ctx.reply("❌ Already checked in today! Reset at 00:00 UTC.")
             
