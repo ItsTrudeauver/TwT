@@ -1,11 +1,13 @@
 import discord
 from discord.ext import commands
+from discord.ui import View, Button
 import random
 import os
 from core.economy import get_item_display_name
 from core.database import get_db_pool
 from core.game_math import calculate_effective_power
 from core.image_gen import generate_team_image
+
 
 class RPG(commands.Cog):
     def __init__(self, bot):
@@ -108,11 +110,11 @@ class RPG(commands.Cog):
         except Exception as e:
             await loading.edit(content=f"⚠️ Visual Error: {e}")
 
-    @commands.command(name="save_team", aliases = ['sdt', 'savedefault', 'dt'])
+    @commands.command(name="save_team")
     async def save_team_preset(self, ctx, name: str):
         """Saves your CURRENT active team to a preset slot."""
-        if len(name) > 32:
-            return await ctx.reply("❌ Name too long (max 32 chars).")
+        if len(name) > 15:
+            return await ctx.reply("❌ Name too long (max 15 chars).")
 
         pool = await get_db_pool()
         async with pool.acquire() as conn:
@@ -134,7 +136,7 @@ class RPG(commands.Cog):
             
             await ctx.reply(f"✅ Active team saved as preset: **{name}**")
 
-    @commands.command(name="load_team", aliases=['equip_team', 'et', 'ldt'])
+    @commands.command(name="load_team", aliases=['equip_team'])
     async def load_team_preset(self, ctx, name: str):
         """Swaps your active team to the saved preset."""
         pool = await get_db_pool()
@@ -163,9 +165,8 @@ class RPG(commands.Cog):
 
     @commands.command(name="presets")
     async def list_presets(self, ctx):
-        """View your saved presets with details."""
+        """View your saved presets with detailed unit names."""
         pool = await get_db_pool()
-        # Fetch detailed data for the view
         rows = await pool.fetch("""
             SELECT preset_name, slot_1, slot_2, slot_3, slot_4, slot_5 
             FROM team_presets 
@@ -176,12 +177,12 @@ class RPG(commands.Cog):
         if not rows:
             return await ctx.reply("You have no saved team presets.")
 
-        # -- Pagination View Class --
-        class PresetView(discord.ui.View):
-            def __init__(self, data, context):
+        class PresetView(View):
+            def __init__(self, ctx, data, pool):
                 super().__init__(timeout=60)
+                self.ctx = ctx
                 self.data = data
-                self.ctx = context
+                self.pool = pool
                 self.current_page = 0
                 self.items_per_page = 5
                 self.total_pages = (len(data) - 1) // self.items_per_page + 1
@@ -189,23 +190,47 @@ class RPG(commands.Cog):
 
             def update_buttons(self):
                 self.prev_btn.disabled = (self.current_page == 0)
-                self.next_btn.disabled = (self.current_page == self.total_pages - 1)
-                self.count_btn.label = f"Page {self.current_page + 1}/{self.total_pages}"
+                self.next_btn.disabled = (self.current_page >= self.total_pages - 1)
+                self.count_btn.label = f"{self.current_page + 1}/{self.total_pages}"
 
-            def create_embed(self):
+            async def get_embed(self):
                 start = self.current_page * self.items_per_page
-                end = start + self.items_per_page
-                page_data = self.data[start:end]
+                page_data = self.data[start:start + self.items_per_page]
                 
+                # 1. Collect all Unit IDs to fetch names in one go
+                all_ids = set()
+                for row in page_data:
+                    for i in range(1, 6):
+                        if row[f'slot_{i}']: all_ids.add(row[f'slot_{i}'])
+                
+                # 2. Fetch Names from DB
+                name_map = {}
+                if all_ids:
+                    res = await self.pool.fetch("""
+                        SELECT i.id, c.name 
+                        FROM inventory i
+                        JOIN characters_cache c ON i.anilist_id = c.anilist_id
+                        WHERE i.id = ANY($1::int[])
+                    """, list(all_ids))
+                    name_map = {r['id']: r['name'] for r in res}
+
+                # 3. Build Embed
                 embed = discord.Embed(title="📁 Team Presets", color=0x00ff00)
                 for row in page_data:
-                    # Format: [101] [102] [None] ...
-                    slots = [row['slot_1'], row['slot_2'], row['slot_3'], row['slot_4'], row['slot_5']]
-                    # Display ID if exists, else 'Empty'
-                    slots_display = " ".join([f"`[{s}]`" if s else "`--`" for s in slots])
+                    slots_display = []
+                    for i in range(1, 6):
+                        uid = row[f'slot_{i}']
+                        if not uid:
+                            slots_display.append("`--`")
+                        else:
+                            # Truncate name to keep it clean
+                            name = name_map.get(uid, "Unknown")
+                            if len(name) > 10: name = name[:9] + "…"
+                            slots_display.append(f"`{name}`")
+
                     embed.add_field(
                         name=f"🔹 {row['preset_name'].title()}", 
-                        value=f"Units: {slots_display}", 
+                        value=" | ".join(slots_display), 
                         inline=False
                     )
                 embed.set_footer(text=f"Total Presets: {len(self.data)}")
@@ -216,7 +241,7 @@ class RPG(commands.Cog):
                 if interaction.user != self.ctx.author: return
                 self.current_page -= 1
                 self.update_buttons()
-                await interaction.response.edit_message(embed=self.create_embed(), view=self)
+                await interaction.response.edit_message(embed=await self.get_embed(), view=self)
 
             @discord.ui.button(label="Page 1/1", style=discord.ButtonStyle.secondary, disabled=True)
             async def count_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -227,11 +252,10 @@ class RPG(commands.Cog):
                 if interaction.user != self.ctx.author: return
                 self.current_page += 1
                 self.update_buttons()
-                await interaction.response.edit_message(embed=self.create_embed(), view=self)
+                await interaction.response.edit_message(embed=await self.get_embed(), view=self)
 
-        # -- Execute --
-        view = PresetView(rows, ctx)
-        await ctx.reply(embed=view.create_embed(), view=view)
+        view = PresetView(ctx, rows, pool)
+        await ctx.reply(embed=await view.get_embed(), view=view)
 
 async def setup(bot):
     await bot.add_cog(RPG(bot))
