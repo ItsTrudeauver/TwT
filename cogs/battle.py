@@ -75,6 +75,8 @@ class Battle(commands.Cog):
     @commands.command(name="battle")
     async def battle(self, ctx, target: typing.Union[discord.Member, str] = None):
         """Initiates a team-based battle against a player or NPC."""
+        pool = await get_db_pool()
+        
         attacker_id = str(ctx.author.id)
         attacker_team = await self.get_team_for_battle(attacker_id)
         task_key = None
@@ -172,15 +174,15 @@ class Battle(commands.Cog):
         initial_win = final_team_totals["attacker"] > final_team_totals["defender"]
         outcome = "WIN" if initial_win else "LOSS"
         
-        # Locate the section where the battle outcome is determined (around line 185)
-# After determining the outcome == "WIN"
-
         if outcome == "WIN" and isinstance(target, discord.Member) and target.id == 1463071276036788392:
-            await pool.execute("""
-                INSERT INTO boss_kills (user_id, boss_id) 
-                VALUES ($1, $2) 
-                ON CONFLICT DO NOTHING
-            """, attacker_id, str(target.id))
+            try:
+                await pool.execute("""
+                    INSERT INTO boss_kills (user_id, boss_id) 
+                    VALUES ($1, $2) 
+                    ON CONFLICT DO NOTHING
+                """, attacker_id, str(target.id))
+            except Exception as e:
+                print(f"Error recording boss kill: {e}")
             
         # Check Snake Trap
         if not initial_win and battle_ctx.flags.get("snake_trap"):
