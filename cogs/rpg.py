@@ -230,7 +230,7 @@ class RPG(commands.Cog):
 
                     embed.add_field(
                         name=f"🔹 {row['preset_name'].title()}", 
-                        value=" | ".join(slots_display), 
+                        value="\n".join(slots_display), 
                         inline=False
                     )
                 embed.set_footer(text=f"Total Presets: {len(self.data)}")
