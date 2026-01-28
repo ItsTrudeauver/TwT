@@ -22,6 +22,7 @@ async def init_db():
     async with pool.acquire() as conn:
 
 # Add this inside the init_db() function
+
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS boss_kills (
                 user_id TEXT,
@@ -169,6 +170,20 @@ async def init_db():
                 slot_3 INTEGER DEFAULT NULL,
                 slot_4 INTEGER DEFAULT NULL,
                 slot_5 INTEGER DEFAULT NULL
+            )
+        """)
+        
+        # TEAM PRESETS: Saved loadouts
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS team_presets (
+                user_id TEXT,
+                preset_name TEXT,
+                slot_1 INTEGER,
+                slot_2 INTEGER,
+                slot_3 INTEGER,
+                slot_4 INTEGER,
+                slot_5 INTEGER,
+                PRIMARY KEY (user_id, preset_name)
             )
         """)
 

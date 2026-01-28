@@ -108,5 +108,70 @@ class RPG(commands.Cog):
         except Exception as e:
             await loading.edit(content=f"⚠️ Visual Error: {e}")
 
+    @commands.command(name="save_team", aliases = ['sdt', 'savedefault', 'dt'])
+    async def save_team_preset(self, ctx, name: str):
+        """Saves your CURRENT active team to a preset slot."""
+        if len(name) > 32:
+            return await ctx.reply("❌ Name too long (max 32 chars).")
+
+        pool = await get_db_pool()
+        async with pool.acquire() as conn:
+            # 1. Fetch current active team
+            current = await conn.fetchrow("SELECT slot_1, slot_2, slot_3, slot_4, slot_5 FROM teams WHERE user_id = $1", str(ctx.author.id))
+            
+            if not current:
+                return await ctx.reply("❌ You don't have a team equipped to save.")
+
+            # 2. Save to presets table
+            await conn.execute("""
+                INSERT INTO team_presets (user_id, preset_name, slot_1, slot_2, slot_3, slot_4, slot_5)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                ON CONFLICT (user_id, preset_name) DO UPDATE SET
+                    slot_1=EXCLUDED.slot_1, slot_2=EXCLUDED.slot_2,
+                    slot_3=EXCLUDED.slot_3, slot_4=EXCLUDED.slot_4, 
+                    slot_5=EXCLUDED.slot_5
+            """, str(ctx.author.id), name.lower(), current['slot_1'], current['slot_2'], current['slot_3'], current['slot_4'], current['slot_5'])
+            
+            await ctx.reply(f"✅ Active team saved as preset: **{name}**")
+
+    @commands.command(name="load_team", aliases=['equip_team', 'et', 'ldt'])
+    async def load_team_preset(self, ctx, name: str):
+        """Swaps your active team to the saved preset."""
+        pool = await get_db_pool()
+        async with pool.acquire() as conn:
+            # 1. Find the preset
+            preset = await conn.fetchrow("""
+                SELECT slot_1, slot_2, slot_3, slot_4, slot_5 
+                FROM team_presets 
+                WHERE user_id = $1 AND preset_name = $2
+            """, str(ctx.author.id), name.lower())
+            
+            if not preset:
+                return await ctx.reply(f"❌ No preset found named '{name}'.")
+
+            # 2. Overwrite the active 'teams' table
+            await conn.execute("""
+                INSERT INTO teams (user_id, slot_1, slot_2, slot_3, slot_4, slot_5)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    slot_1=EXCLUDED.slot_1, slot_2=EXCLUDED.slot_2,
+                    slot_3=EXCLUDED.slot_3, slot_4=EXCLUDED.slot_4,
+                    slot_5=EXCLUDED.slot_5
+            """, str(ctx.author.id), preset['slot_1'], preset['slot_2'], preset['slot_3'], preset['slot_4'], preset['slot_5'])
+            
+            await ctx.reply(f"✅ Equipped preset **{name}**!")
+
+    @commands.command(name="presets")
+    async def list_presets(self, ctx):
+        """View your saved presets."""
+        pool = await get_db_pool()
+        rows = await pool.fetch("SELECT preset_name FROM team_presets WHERE user_id = $1", str(ctx.author.id))
+        
+        if not rows:
+            return await ctx.reply("You have no saved team presets.")
+            
+        names = [r['preset_name'] for r in rows]
+        await ctx.reply(f"**Saved Teams:** {', '.join(names)}")
+
 async def setup(bot):
     await bot.add_cog(RPG(bot))
