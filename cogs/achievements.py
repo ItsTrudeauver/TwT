@@ -13,74 +13,130 @@ class AchievementPaginationView(View):
         self.ctx = ctx
         self.user = user
         self.earned_ids = earned_ids
-        self.data = list(all_achievements.values()) # Convert dict values to list
+        self.all_data = list(all_achievements.values())
+        
+        # --- PRE-CALCULATE PAGES ---
+        self.badge_pages = self._generate_badge_pages()
+        self.text_pages = self._generate_text_pages()
+        
+        self.total_pages = len(self.badge_pages) + len(self.text_pages)
         self.current_page = 0
-        self.items_per_page = 10
-        self.total_pages = math.ceil(len(self.data) / self.items_per_page)
+        
+        # Calculate the index where text pages start
+        self.text_start_index = len(self.badge_pages)
+
+    def _generate_badge_pages(self):
+        """Chunks badges into fields/pages safely."""
+        pages = []
+        
+        # 1. Build a massive list of all badge strings
+        all_badge_strs = []
+        for ach in self.all_data:
+            emote = f"{ach.badge_emote}" if ach.id in self.earned_ids else f"{Emotes.UNACHIEVED}"
+            all_badge_strs.append(emote)
+
+        # 2. Chunk into fields (Max 1024 chars per field)
+        fields = []
+        current_field = ""
+        field_limit = 1000  # Safety buffer
+        
+        for badge_str in all_badge_strs:
+            if len(current_field) + len(badge_str) > field_limit:
+                fields.append(current_field)
+                current_field = badge_str
+            else:
+                current_field += badge_str
+        
+        if current_field:
+            fields.append(current_field)
+            
+        # 3. Chunk fields into Pages (Max 2 fields of badges per page for aesthetics)
+        # You can increase FIELDS_PER_PAGE if you want denser pages
+        FIELDS_PER_PAGE = 2
+        for i in range(0, len(fields), FIELDS_PER_PAGE):
+            pages.append(fields[i : i + FIELDS_PER_PAGE])
+            
+        return pages if pages else [["None"]] # Handle empty case
+
+    def _generate_text_pages(self):
+        """Chunks text details into pages of 10."""
+        pages = []
+        ITEMS_PER_PAGE = 10
+        for i in range(0, len(self.all_data), ITEMS_PER_PAGE):
+            pages.append(self.all_data[i : i + ITEMS_PER_PAGE])
+        return pages if pages else [[]]
 
     async def get_page_embed(self):
-        # Slice data for current page
-        start = self.current_page * self.items_per_page
-        end = start + self.items_per_page
-        page_items = self.data[start:end]
-
-        # 1. Badge Row (Always visible or specific to page? Keeping it global is usually nicer)
-        # However, if you have MANY badges, you might want to slice this too. 
-        # For now, let's keep the badge row global but truncated if needed, 
-        # or we can just focus on the list details.
-        
-        # Let's rebuild the badge row just for the summary (or skip it if it's too huge).
-        # We'll include a condensed badge row of *all* earned badges at the top.
-        badge_row = ""
-        for ach in self.data:
-            badge_row += f"{ach.badge_emote}" if ach.id in self.earned_ids else f"{Emotes.UNACHIEVED}"
-        
-        # Truncate badge row if absolutely massive, though emojis are small.
-        if len(badge_row) > 1000: 
-            badge_row = badge_row[:1000] + "..."
-
         embed = discord.Embed(
             title=f"{Emotes.ACHIEVEMENTS} {self.user.display_name}'s Hall of Fame",
             color=0x2b2d31
         )
         embed.set_thumbnail(url=self.user.display_avatar.url)
-        embed.add_field(name="Badges", value=badge_row or "None", inline=False)
 
-        # 2. Detailed List for this Page
-        details = ""
-        for ach in page_items:
-            status = "\✅" if ach.id in self.earned_ids else "\🔒"
-            desc = f"**{ach.name}**" if ach.id in self.earned_ids else f"*{ach.name}*"
-            details += f"{status} {desc}\n"
-            # Optional: Add description line
-            # details += f"╚ {ach.description}\n" 
+        # --- RENDER LOGIC ---
+        
+        # CASE A: Badge Page
+        if self.current_page < self.text_start_index:
+            fields = self.badge_pages[self.current_page]
+            
+            for i, field_text in enumerate(fields):
+                # Only title the first field "Badges"
+                name = "Badges" if i == 0 else "\u200b"
+                embed.add_field(name=name, value=field_text, inline=False)
+                
+            footer_txt = f"View: Badges (Page {self.current_page + 1}/{self.total_pages})"
 
-        embed.add_field(name=f"Achievements (Page {self.current_page + 1}/{self.total_pages})", value=details, inline=False)
-        embed.set_footer(text=f"Total Unlocked: {len(self.earned_ids)}/{len(self.data)}")
+        # CASE B: Text Page
+        else:
+            # Calculate local index for text pages
+            local_idx = self.current_page - self.text_start_index
+            items = self.text_pages[local_idx]
+            
+            description = ""
+            for ach in items:
+                is_unlocked = ach.id in self.earned_ids
+                icon = "✅" if is_unlocked else "🔒"
+                name = f"**{ach.name}**" if is_unlocked else f"*{ach.name}*"
+                
+                description += f"{icon} {name}\n╚ {ach.description}\n\n"
+            
+            embed.description = description
+            footer_txt = f"View: Details (Page {self.current_page + 1}/{self.total_pages})"
+
+        # Common Footer
+        unlock_stats = f"Unlocked: {len(self.earned_ids)}/{len(self.all_data)}"
+        embed.set_footer(text=f"{footer_txt} • {unlock_stats}")
         
         return embed
 
+    # --- BUTTONS ---
+
     @discord.ui.button(label="◀️", style=discord.ButtonStyle.secondary)
     async def prev_button(self, interaction: discord.Interaction, button: Button):
-        if interaction.user.id != self.ctx.author.id:
-            return await interaction.response.send_message("❌ This is not your menu.", ephemeral=True)
-            
+        if interaction.user.id != self.ctx.author.id: return
+        
         if self.current_page > 0:
             self.current_page -= 1
             await interaction.response.edit_message(embed=await self.get_page_embed(), view=self)
+
+    @discord.ui.button(label="📜 List", style=discord.ButtonStyle.primary)
+    async def jump_button(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id != self.ctx.author.id: return
+        
+        # Jump straight to the first text page
+        if self.current_page != self.text_start_index:
+            self.current_page = self.text_start_index
+            await interaction.response.edit_message(embed=await self.get_page_embed(), view=self)
         else:
-            await interaction.response.defer()
+            await interaction.response.defer() # Already there
 
     @discord.ui.button(label="▶️", style=discord.ButtonStyle.secondary)
     async def next_button(self, interaction: discord.Interaction, button: Button):
-        if interaction.user.id != self.ctx.author.id:
-            return await interaction.response.send_message("❌ This is not your menu.", ephemeral=True)
+        if interaction.user.id != self.ctx.author.id: return
 
         if self.current_page < self.total_pages - 1:
             self.current_page += 1
             await interaction.response.edit_message(embed=await self.get_page_embed(), view=self)
-        else:
-            await interaction.response.defer()
 
 class AchievementCog(commands.Cog):
     def __init__(self, bot):
@@ -106,8 +162,8 @@ class AchievementCog(commands.Cog):
         """Automatically checks for new achievements after any command."""
         if ctx.author.bot: return
 
-        # Wrap in try/except to prevent errors from blocking command execution
         try:
+            # We process ALL achievements for the user
             new_unlocks = await AchievementEngine.process_all(ctx.author.id)
             
             for ach in new_unlocks:
@@ -127,6 +183,7 @@ class AchievementCog(commands.Cog):
                 
                 await ctx.channel.send(embed=embed)
         except Exception as e:
+            # Silent fail or log to console to avoid spamming users if DB is busy
             print(f"Achievement Check Error: {e}")
 
 async def setup(bot):
