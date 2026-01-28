@@ -76,13 +76,18 @@ class Battle(commands.Cog):
     async def battle(self, ctx, target: typing.Union[discord.Member, str] = None):
         """Initiates a team-based battle against a player or NPC."""
         attacker_id = str(ctx.author.id)
+        print(f"[DEBUG] ⚔️ Battle Init: {ctx.author.name} ({attacker_id}) vs {target}")
+        
         attacker_team = await self.get_team_for_battle(attacker_id)
+        print(f"[DEBUG] Attacker team fetched: {len(attacker_team)} characters.")
+        
         task_key = None
 
         if not attacker_team:
             return await ctx.reply("❌ Your team is empty! Use `!team` to set one up.")
 
         if isinstance(target, discord.Member):
+            print(f"[DEBUG] Fetching defender team for Member: {target.display_name} ({target.id})")
             defender_team = await self.get_team_for_battle(str(target.id))
             defender_name = target.display_name
             task_key = "pvp"
@@ -119,17 +124,18 @@ class Battle(commands.Cog):
 
         load_skills(attacker_team, "attacker")
         load_skills(defender_team, "defender")
-        
+        print(f"[DEBUG] Loaded {len(all_skills)} total skills.")
 
         # --- 2. PHASE: START OF BATTLE ---
-        # (Zodiacs, Disables, Kamikaze, Team Debuffs)
+        print("[DEBUG] Phase: on_battle_start...")
         for skill in all_skills:
+            print(f"  - Running {skill.name}.on_battle_start (Side: {skill.side}, Slot: {skill.idx})")
             await skill.on_battle_start(battle_ctx)
 
         # --- 3. PHASE: CALCULATION ---
+        print("[DEBUG] Phase: Power Calculation...")
         final_powers = {"attacker": [], "defender": []}
 
-        # Calculate Individual Powers (Base * Mods * Context)
         for side in ["attacker", "defender"]:
             team = battle_ctx.get_team(side)
             for i, char in enumerate(team):
@@ -137,20 +143,15 @@ class Battle(commands.Cog):
                     final_powers[side].append(0)
                     continue
                 
-                # Base Power
                 p = char['true_power']
-                
-                # Ask skills for multipliers (Only OWN skills)
                 my_skills = [s for s in all_skills if s.side == side and s.idx == i]
                 for s in my_skills:
                     mod = await s.get_power_modifier(battle_ctx, p)
                     p *= mod
 
-                # Apply Context Multipliers (Debuffs, Global Buffs)
                 p *= battle_ctx.multipliers[side][i]
                 p += battle_ctx.flat_bonuses[side][i]
 
-                # Apply Variance (unless locked by Dragon Zodiac)
                 if battle_ctx.flags.get("variance_override", {}).get(f"{side}_{i}"):
                     variance = battle_ctx.flags["variance_override"][f"{side}_{i}"]
                 else:
@@ -158,36 +159,31 @@ class Battle(commands.Cog):
                 
                 final_powers[side].append(max(0, p * variance))
 
-        # Post-Calculation Logic (Monkey swap, Dog copy, etc.)
+        print("[DEBUG] Phase: on_post_power_calculation...")
         for skill in all_skills:
+            print(f"  - Running {skill.name}.on_post_power_calculation (Side: {skill.side}, Slot: {skill.idx})")
             await skill.on_post_power_calculation(battle_ctx, final_powers)
 
-        # Final Summation
-        final_team_totals = {"attacker": 0, "defender": 0}
-        for side in ["attacker", "defender"]:
-            total = sum(final_powers[side])
-            final_team_totals[side] = total
+        final_team_totals = {"attacker": sum(final_powers["attacker"]), "defender": sum(final_powers["defender"])}
 
         # --- 4. PHASE: OUTCOME ---
         initial_win = final_team_totals["attacker"] > final_team_totals["defender"]
         outcome = "WIN" if initial_win else "LOSS"
-        
-        # Locate the section where the battle outcome is determined (around line 185)
-# After determining the outcome == "WIN"
+        print(f"[DEBUG] Outcome determined: {outcome} (Atk: {final_team_totals['attacker']:,} vs Def: {final_team_totals['defender']:,})")
 
         if outcome == "WIN" and isinstance(target, discord.Member) and target.id == 1463071276036788392:
+            print(f"[DEBUG] Recording Boss Kill for bot {target.id}...")
             await pool.execute("""
                 INSERT INTO boss_kills (user_id, boss_id) 
                 VALUES ($1, $2) 
                 ON CONFLICT DO NOTHING
             """, attacker_id, str(target.id))
+            print("[DEBUG] Boss Kill recorded.")
             
-        # Check Snake Trap
         if not initial_win and battle_ctx.flags.get("snake_trap"):
             outcome = "DRAW"
             battle_ctx.add_log("attacker", None, "🐍 The **Snake Zodiac** trap triggered! Defeat -> **DRAW**.")
 
-        # Check Revive Skills (Only trigger on LOSS)
         if outcome == "LOSS":
              for skill in all_skills:
                  if skill.side == "attacker":
@@ -200,7 +196,6 @@ class Battle(commands.Cog):
         win_idx = 1 if outcome == "WIN" else (2 if outcome == "LOSS" else 0)
         color = 0x5865F2 if win_idx == 1 else (0xED4245 if win_idx == 2 else 0x979C9F)
         
-        # Flatten logs
         atk_logs = [l for slot in battle_ctx.logs["attacker"].values() for l in slot] + battle_ctx.misc_logs["attacker"]
         def_logs = [l for slot in battle_ctx.logs["defender"].values() for l in slot] + battle_ctx.misc_logs["defender"]
 
@@ -209,17 +204,12 @@ class Battle(commands.Cog):
             description=f"🏆 **Winner: {'Draw' if win_idx == 0 else (ctx.author.display_name if win_idx == 1 else defender_name)}**",
             color=color
         )
-
         embed.add_field(name=f"🔵 {ctx.author.display_name}", value=f"Total: **{int(final_team_totals['attacker']):,}**", inline=True)
         embed.add_field(name=f"🔴 {defender_name}", value=f"Total: **{int(final_team_totals['defender']):,}**", inline=True)
 
-        if atk_logs:
-            embed.add_field(name="🔹 Attacker Highlights", value="\n".join(atk_logs[:10]), inline=False)
-        if def_logs:
-            embed.add_field(name="🔸 Defender Highlights", value="\n".join(def_logs[:10]), inline=False)
-
         # Task Progress
         pool = await get_db_pool()
+        print(f"[DEBUG] Updating daily task progress for {attacker_id}...")
         await pool.execute("""
             INSERT INTO daily_tasks (user_id, task_key, progress, last_updated, is_claimed)
             VALUES ($1, $2, 1, CURRENT_DATE, FALSE)
@@ -230,14 +220,19 @@ class Battle(commands.Cog):
                 is_claimed = FALSE
             WHERE daily_tasks.last_updated < CURRENT_DATE OR daily_tasks.progress = 0
         """, attacker_id, task_key)
+        print("[DEBUG] Daily task updated.")
 
-        # Image
+        # Image Generation
+        print("[DEBUG] Starting generate_battle_image (this may hang if images are broken)...")
         img_bytes = await generate_battle_image(attacker_team, defender_team, ctx.author.display_name, defender_name, winner_idx=win_idx)
+        print("[DEBUG] Image generation complete.")
+        
         file = discord.File(fp=img_bytes, filename="battle.png")
         embed.set_image(url="attachment://battle.png")
 
         await loading_msg.delete()
         await ctx.reply(file=file, embed=embed)
+        print(f"[DEBUG] ✅ Battle command finished successfully for {attacker_id}")
 
 async def setup(bot):
     await bot.add_cog(Battle(bot))
