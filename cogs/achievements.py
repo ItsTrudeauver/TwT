@@ -49,7 +49,7 @@ class AchievementPaginationView(View):
         # 2. Detailed List for this Page
         details = ""
         for ach in page_items:
-            status = "✅" if ach.id in self.earned_ids else "🔒"
+            status = "\✅" if ach.id in self.earned_ids else "\🔒"
             desc = f"**{ach.name}**" if ach.id in self.earned_ids else f"*{ach.name}*"
             details += f"{status} {desc}\n"
             # Optional: Add description line
