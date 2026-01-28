@@ -29,36 +29,30 @@ class AchievementPaginationView(View):
         self._update_buttons()
 
     def _generate_badge_pages(self):
-        """Chunks badges into fields/pages safely."""
+        """Chunks badges into the Embed Description (Max 4096 chars)."""
         pages = []
         
-        # 1. Build a massive list of all badge strings
         all_badge_strs = []
         for ach in self.all_data:
+            # Use the badge emote or the unachieved lock
             emote = f"{ach.badge_emote}" if ach.id in self.earned_ids else f"{Emotes.UNACHIEVED}"
             all_badge_strs.append(emote)
 
-        # 2. Chunk into fields (Max 1024 chars per field)
-        fields = []
-        current_field = ""
-        field_limit = 1000  # Safety buffer
+        current_page = ""
+        limit = 4000  # Safe limit under 4096
         
-        for badge_str in all_badge_strs:
-            if len(current_field) + len(badge_str) > field_limit:
-                fields.append(current_field)
-                current_field = badge_str
+        for badge in all_badge_strs:
+            # Ensure we never cut a badge in half
+            if len(current_page) + len(badge) > limit:
+                pages.append(current_page)
+                current_page = badge
             else:
-                current_field += badge_str
+                current_page += badge
         
-        if current_field:
-            fields.append(current_field)
+        if current_page:
+            pages.append(current_page)
             
-        # 3. Chunk fields into Pages (Max 2 fields of badges per page for aesthetics)
-        FIELDS_PER_PAGE = 2
-        for i in range(0, len(fields), FIELDS_PER_PAGE):
-            pages.append(fields[i : i + FIELDS_PER_PAGE])
-            
-        return pages if pages else [["None"]]
+        return pages if pages else ["No achievements yet!"]
 
     def _generate_text_pages(self):
         """Chunks text details into pages of 10."""
@@ -75,10 +69,10 @@ class AchievementPaginationView(View):
         for child in self.children:
             if isinstance(child, Button) and child.custom_id == "jump_btn":
                 if is_text_mode:
-                    child.label = "Badges"
+                    child.label = "📛 Badges"
                     child.style = discord.ButtonStyle.secondary
                 else:
-                    child.label = "List"
+                    child.label = "📜 List"
                     child.style = discord.ButtonStyle.primary
                 break
 
@@ -91,18 +85,13 @@ class AchievementPaginationView(View):
 
         # --- RENDER LOGIC ---
         
-        # CASE A: Badge Page
+        # CASE A: Badge Page (Visual Wall)
         if self.current_page < self.text_start_index:
-            fields = self.badge_pages[self.current_page]
-            
-            for i, field_text in enumerate(fields):
-                # Only title the first field "Badges"
-                name = "Badges" if i == 0 else "\u200b"
-                embed.add_field(name=name, value=field_text, inline=False)
-                
+            # We use description for the wall of badges to avoid Field gaps
+            embed.description = self.badge_pages[self.current_page]
             footer_txt = f"View: Badges (Page {self.current_page + 1}/{self.total_pages})"
 
-        # CASE B: Text Page
+        # CASE B: Text Page (Detailed List)
         else:
             local_idx = self.current_page - self.text_start_index
             items = self.text_pages[local_idx]
@@ -134,7 +123,6 @@ class AchievementPaginationView(View):
             self._update_buttons()
             await interaction.response.edit_message(embed=await self.get_page_embed(), view=self)
 
-    # Note: custom_id="jump_btn" is crucial for _update_buttons to find it
     @discord.ui.button(label="📜 List", style=discord.ButtonStyle.primary, custom_id="jump_btn")
     async def jump_button(self, interaction: discord.Interaction, button: Button):
         if interaction.user.id != self.ctx.author.id: return
