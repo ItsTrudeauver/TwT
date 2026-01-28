@@ -3,11 +3,28 @@
 from .implementations import (
     SimpleBuffSkill, Lucky7Skill, JokerSkill, AmberSunSkill, EternitySkill,
     OnyxMoonSkill, KamikazeSkill, GuardSkill, EphemeralitySkill,
-    ZodiacSkill, ReviveSkill
+    ZodiacSkill, ReviveSkill, FelineFealtySkill, EntwinedSoulsSkill
 )
 
 # If a class isn't specified, it defaults to SimpleBuffSkill (or just ignores if logic not needed)
 SKILL_DATA = {
+    "Feline Fealty": {
+        "description": "When Tohru Honda is present, increases both unit's power by 10%, and reduce enemy's team power by 2.5%.",
+        "value": [207, 0.10, 0.025], # [Tohru ID, Buff, Debuff]
+        "applies_in": "b",
+        "stackable": False,
+        "overlap": False,
+        "class": FelineFealtySkill
+    },
+    "Entwined Souls": {
+        "description": "When Kyo Sohma is present, triggers a boosted Queen of the Zodiacs effect (Ox, Tiger, Rabbit, Rooster, Pig, Horse) with 20% increased effectiveness.",
+        "value": [209, 1.2], # [Kyo ID, Effectiveness Multiplier]
+        "applies_in": "b",
+        "stackable": False,
+        "overlap": False,
+        "class": EntwinedSoulsSkill
+    },
+    
     "The Onyx Moon": {
         "description": "Casts Umbra: disable one random enemy skill. If Coco is present, casts Eclipse instead: The unit with the disabled skill also loses 20% power.",
         "value": [129840, 0.20],
