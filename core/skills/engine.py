@@ -64,6 +64,7 @@ class BattleSkill:
         self.side = side        # "attacker" or "defender"
         self.val = config_value # The value from SKILL_DATA (e.g. 0.25)
         self.enemy_side = "defender" if side == "attacker" else "attacker"
+        self.priority = getattr(self.__class__, 'priority', 0)
 
     async def on_battle_start(self, ctx: BattleContext):
         """

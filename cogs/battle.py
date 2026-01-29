@@ -121,7 +121,7 @@ class Battle(commands.Cog):
 
         load_skills(attacker_team, "attacker")
         load_skills(defender_team, "defender")
-        
+        all_skills.sort(key=lambda s: s.priority, reverse=True)
 
         # --- 2. PHASE: START OF BATTLE ---
         # (Zodiacs, Disables, Kamikaze, Team Debuffs)

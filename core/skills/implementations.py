@@ -141,6 +141,7 @@ class FelineFealtySkill(BattleSkill):
             ctx.add_log(self.side, self.idx, f"🍙 **Feline Fealty** softened the enemy blows (-{debuff*100}%)!")
 
 class EntwinedSoulsSkill(BattleSkill):
+    priority = 10
     async def on_battle_start(self, ctx: BattleContext):
         if ctx.is_suppressed(self.side, self.name): return
         
@@ -205,7 +206,7 @@ class EntwinedSoulsSkill(BattleSkill):
                 tags = c.get('ability_tags', [])
                 if isinstance(tags, str): tags = json.loads(tags)
                 for tag in tags:
-                    if tag != "Queen of the Zodiacs": valid_targets.append(tag)
+                    if tag not in ["Queen of the Zodiacs", "The Onyx Moon", "Entwined Souls"]: valid_targets.append(tag)
             
             if valid_targets:
                 target_skill = random.choice(valid_targets)
@@ -231,20 +232,18 @@ class EntwinedSoulsSkill(BattleSkill):
 # --- DEBUFFS / CONTROL ---
 
 class OnyxMoonSkill(BattleSkill):
+    priority = 10
     async def on_battle_start(self, ctx: BattleContext):
-        # Note: Onyx Moon usually ignores suppression because it fires at Start of Battle (same priority as Pig)
-        # But if you want it suppressible by a faster Pig, uncomment the check.
         # if ctx.is_suppressed(self.side, self.name): return
 
         enemy_team = ctx.get_team(self.enemy_side)
-        # Find valid targets (enemies with skills, excluding Zodiacs usually)
         valid_targets = []
         for i, char in enumerate(enemy_team):
             if not char: continue
             tags = char.get('ability_tags', [])
             if isinstance(tags, str): tags = json.loads(tags)
             for tag in tags:
-                if tag != "Queen of the Zodiacs": 
+                if tag not in ["Queen of the Zodiacs", "The Onyx Moon", "Entwined Souls"]:
                     valid_targets.append((i, tag))
         
         if not valid_targets:
@@ -324,6 +323,7 @@ class EphemeralitySkill(BattleSkill):
 # --- ZODIACS ---
 
 class ZodiacSkill(BattleSkill):
+    priority = 10
     async def on_battle_start(self, ctx: BattleContext):
         if ctx.is_suppressed(self.side, self.name): return
 
@@ -395,7 +395,7 @@ class ZodiacSkill(BattleSkill):
                 tags = c.get('ability_tags', [])
                 if isinstance(tags, str): tags = json.loads(tags)
                 for tag in tags:
-                    if tag != "Queen of the Zodiacs": valid_targets.append(tag)
+                    if tag not in ["Queen of the Zodiacs", "The Onyx Moon", "Entwined Souls"]: valid_targets.append(tag)
             
             if valid_targets:
                 target_skill = random.choice(valid_targets)
