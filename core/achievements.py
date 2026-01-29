@@ -95,12 +95,11 @@ ACHIEVEMENTS: Dict[str, Achievement] = {
             SELECT EXISTS (
             SELECT 1
             FROM inventory i
-            JOIN characters_cache c ON c.id = i.character_id
+            JOIN characters_cache c ON i.anilist_id = c.anilist_id
             WHERE i.user_id = $1
             AND i.dupe_level >= 10
             AND c.rarity = 'SSR'
         );
-
         """
     ),
 
