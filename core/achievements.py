@@ -83,6 +83,26 @@ ACHIEVEMENTS: Dict[str, Achievement] = {
             SELECT EXISTS(SELECT 1 FROM inventory WHERE user_id = $1 AND dupe_level >= 10)
         """
     ),
+    
+    "PRISMATIC_TRANSCENDENCE": Achievement(
+        id="PRISMATIC_TRANSCENDENCE",
+        name="Prismatic Transcendence",
+        description="Reach Dupe Level 10 on any SSR character.",
+        badge_emote=Emotes.PRISMATIC,
+        gem_reward=50000,
+        coin_reward=1000,
+        check_sql="""
+            SELECT EXISTS (
+            SELECT 1
+            FROM inventory i
+            JOIN characters_cache c ON c.id = i.character_id
+            WHERE i.user_id = $1
+            AND i.dupe_level >= 10
+            AND c.rarity = 'SSR'
+        );
+
+        """
+    ),
 
     "DEEP_POCKETS": Achievement(
         id="DEEP_POCKETS",
